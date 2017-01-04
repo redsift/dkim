@@ -6,6 +6,10 @@ import (
 	"net/mail"
 )
 
+var (
+	ErrSignatureNotFound = errors.New("DKIM-Signature not found")
+)
+
 func ParseEml(r *bufio.Reader) (*DKIM, error) {
 	var Dkim *DKIM
 	var msg *mail.Message
@@ -20,7 +24,7 @@ func ParseEml(r *bufio.Reader) (*DKIM, error) {
 	}
 
 	if header, err = findDkimHeader(raw_headers); err != nil {
-		return nil, errors.New("DKIM-Signature not found")
+		return nil, ErrSignatureNotFound
 	}
 
 	if Dkim, err = NewDKIM(header, msg); err != nil {
@@ -28,4 +32,24 @@ func ParseEml(r *bufio.Reader) (*DKIM, error) {
 	}
 	Dkim.RawMailHeader = raw_headers
 	return Dkim, nil
+}
+
+// FromMessage builds DKIM from mail.Message
+func FromMessage(msg *mail.Message) (*DKIM, error) {
+	var (
+		m   *DKIM
+		err error
+		hdr string
+	)
+
+	if hdr, err = findDkimHeader(msg.Header); err != nil {
+		return nil, ErrSignatureNotFound
+	}
+
+	if m, err = NewDKIM(hdr, msg); err != nil {
+		return nil, err
+	}
+
+	m.RawMailHeader = msg.Header
+	return m, nil
 }
