@@ -2,12 +2,7 @@ package dkim
 
 import (
 	"bufio"
-	"errors"
 	"net/mail"
-)
-
-var (
-	ErrSignatureNotFound = errors.New("DKIM-Signature not found")
 )
 
 func ParseEml(r *bufio.Reader) (*DKIM, error) {

@@ -6,7 +6,6 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"errors"
-	"github.com/golang/glog"
 	"strings"
 )
 
@@ -68,12 +67,9 @@ func (Dkim *DKIM) GetPublicKey() (*DKIMPublicKey, error) {
 	public_key, err = CustomHandlers.CacheGetHandler(domain)
 
 	if err != nil {
-		glog.Infof("CACHE MISS: %s (%s)\n", domain, err)
 		if public_key, err = CustomHandlers.DnsFetchHandler(domain); err == nil {
 			CustomHandlers.CacheSetHandler(domain, public_key)
 		}
-	} else {
-		glog.Infof("CACHE HIT: %s -> %s\n", domain, public_key)
 	}
 	if err == nil {
 		if dkim_pk, err = newDKIMPublicKey(string(public_key)); err != nil {
@@ -91,8 +87,6 @@ func (Dkim *DKIM) Verify() bool {
 
 	if Dkim.Header.Domain != "" {
 		Dkim.Status.ValidBody = bytes.Equal(Dkim.GetBodyHash(), Dkim.Header.BodyHash)
-		glog.Infof("Calculated BodyHash %#v\n", Dkim.bodyHash)
-		glog.Infof("Message    BodyHash %#v\n", Dkim.Header.BodyHash)
 		if Dkim.PublicKey, err = Dkim.GetPublicKey(); err == nil {
 
 			if pk, err = x509.ParsePKIXPublicKey(Dkim.PublicKey.PublicKey); err == nil {
@@ -102,6 +96,5 @@ func (Dkim *DKIM) Verify() bool {
 			}
 		}
 	}
-	glog.Infof("Body: %v, Valid: %v, PK: %v\n", Dkim.Status.ValidBody, Dkim.Status.Valid, Dkim.Status.HasPublicKey)
 	return Dkim.Status.ValidBody && Dkim.Status.Valid && Dkim.Status.HasPublicKey
 }

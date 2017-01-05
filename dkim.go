@@ -7,7 +7,6 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"github.com/golang/glog"
 	"hash"
 	"io"
 	"net/mail"
@@ -16,6 +15,15 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+)
+
+var (
+	ErrSignatureNotFound    = errors.New("DKIM-Signature not found")
+	ErrUnsupportedVersion   = errors.New("unsupported version")
+	ErrUnsupportedAlgorithm = errors.New("unsupported algorithm")
+	ErrMalformedTagValue    = errors.New("malformed tag value")
+	ErrUnsupportedQueryType = errors.New("unsupported query type")
+	ErrUnsupportedTag       = errors.New("unsupported tag")
 )
 
 func NewDKIM(header string, msg *mail.Message) (*DKIM, error) {
@@ -33,12 +41,12 @@ func NewDKIM(header string, msg *mail.Message) (*DKIM, error) {
 
 func (Dkim *DKIM) GetHasher() crypto.Hash {
 	switch Dkim.Header.Algorithm {
-	case "rsa-sha256":
-		return crypto.SHA256
 	case "rsa-sha1":
 		return crypto.SHA1
+	case "rsa-sha256":
+		return crypto.SHA256
 	default:
-		panic("Unknown algorithm")
+		return crypto.SHA256 // TODO return 0 seems to be good alternative; needs further investigation
 	}
 }
 
@@ -113,27 +121,28 @@ func (Dkim *DKIM) parseDKIM() (err error) {
 		switch key {
 		case "v":
 			if value != "1" {
-				return errors.New("invalid version")
+				return ErrUnsupportedVersion
 			}
 			Dkim.Header.Version = value
-			break
 		case "a":
 			Dkim.Header.Algorithm = value
 			if value != "rsa-sha1" && value != "rsa-sha256" {
-				panic(fmt.Sprintf("unknown algorithm %s", value))
+				return ErrUnsupportedAlgorithm
 			}
-			break
-		case "d":
-			Dkim.Header.Domain = value
-			break
+		case "b":
+			if Dkim.Header.Signature, err = base64.StdEncoding.DecodeString(value); err != nil {
+				return ErrMalformedTagValue
+			}
+		case "bh":
+			if Dkim.Header.BodyHash, err = base64.StdEncoding.DecodeString(value); err != nil {
+				return ErrMalformedTagValue
+			}
 		case "c":
 			Dkim.Header.Canonization = value
 			Dkim.IsBodyRelaxed = strings.HasSuffix(value, "/relaxed")
 			Dkim.IsHeaderRelaxed = strings.HasPrefix(value, "relaxed")
-			break
-		case "s":
-			Dkim.Header.Selector = value
-			break
+		case "d":
+			Dkim.Header.Domain = value
 		case "h":
 			for _, key := range strings.Split(value, ":") {
 				if prev_key != key {
@@ -141,52 +150,38 @@ func (Dkim *DKIM) parseDKIM() (err error) {
 					prev_key = key
 				}
 			}
-			break
-		case "t":
-			if Dkim.Header.Unixtime, err = strconv.Atoi(value); err != nil {
-				return errors.New("invalid time")
-			}
-			break
-		case "bh":
-			if Dkim.Header.BodyHash, err = base64.StdEncoding.DecodeString(value); err != nil {
-				return errors.New("invalid body hash")
-			}
-		case "b":
-			if Dkim.Header.Signature, err = base64.StdEncoding.DecodeString(value); err != nil {
-				return errors.New("invalid signature")
-			}
-			break
 		case "i":
 			Dkim.Header.Identifier = value
-			break
 		case "l":
 			if Dkim.Header.Length, err = strconv.Atoi(value); err != nil {
-				return errors.New("invalid length")
+				return ErrMalformedTagValue
 			}
-			break
 		case "q":
 			if value != "dns/txt" && value != "dns" {
-				return errors.New("invalid query type")
+				return ErrUnsupportedQueryType
 			}
 			Dkim.Header.QueryType = "dns/txt"
-			break
+		case "s":
+			Dkim.Header.Selector = value
+		case "t":
+			if Dkim.Header.Unixtime, err = strconv.Atoi(value); err != nil {
+				return ErrMalformedTagValue
+			}
 		case "x":
 			if Dkim.Header.Expiration, err = strconv.Atoi(value); err != nil {
-				return errors.New("invalid expiration time")
+				return ErrMalformedTagValue
 			}
-			break
 		case "z":
 			Dkim.Header.CopiedHeaders = make(map[string]string, 0)
 			for _, header_item := range strings.Split(value, "|") {
 				header_kv := strings.SplitN(header_item, ":", 2)
 				Dkim.Header.CopiedHeaders[header_kv[0]] = header_kv[1]
 			}
-			break
 		default:
-			return errors.New(fmt.Sprintf("unknown key %s", key))
+			return ErrUnsupportedTag
 		}
 	}
-	return
+	return nil
 }
 
 func (Dkim *DKIM) dkimSignatureForHash() []byte {
@@ -307,11 +302,9 @@ func (Dkim *DKIM) GetHeaderHash() []byte {
 		if Dkim.IsHeaderRelaxed {
 			hasher.Write([]byte("\r\n"))
 		}
-		glog.Infof("%s:%s\r\n", header_key, Dkim.canonizeHeader([]byte(header_value)))
 	}
 	hasher.Write([]byte(dkim_sig_key + ":"))
 	hasher.Write(Dkim.canonizeHeader(Dkim.dkimSignatureForHash()))
-	glog.Infof("%s:%s\n", dkim_sig_key, Dkim.canonizeHeader(Dkim.dkimSignatureForHash()))
 	Dkim.headerHash = hasher.Sum(nil)
 	return Dkim.headerHash
 }

@@ -6,22 +6,27 @@ import (
 	"testing"
 )
 
-func Test_Ok(t *testing.T) {
-	var fp *os.File
-
-	fp, _ = os.Open("test_data/valid_1.eml")
-	defer fp.Close()
-	if ParseEml(bufio.NewReader(fp)).Verify() != true {
-		t.Fail()
+func TestParseEml(t *testing.T) {
+	{
+		f, _ := os.Open("_test_data/valid_1.eml")
+		defer f.Close()
+		m, err := ParseEml(bufio.NewReader(f))
+		if err != nil {
+			t.Fail()
+		}
+		if m.Verify() != true {
+			t.Fail()
+		}
 	}
-}
-
-func Test_MayBeNotOk(t *testing.T) {
-	var fp *os.File
-
-	fp, _ = os.Open("test_data/invalid_1.eml")
-	defer fp.Close()
-	if ParseEml(bufio.NewReader(fp)).Verify() == true {
-		t.Fail()
+	{
+		f, _ := os.Open("_test_data/invalid_1.eml")
+		defer f.Close()
+		m, err := ParseEml(bufio.NewReader(f))
+		if err != nil {
+			t.Fail()
+		}
+		if m.Verify() == true {
+			t.Fail()
+		}
 	}
 }
