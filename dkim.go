@@ -309,68 +309,65 @@ func (Dkim *DKIM) GetHeaderHash() []byte {
 	return Dkim.headerHash
 }
 
-func (Dkim *DKIM) readBodyTo(w io.Writer) {
-	var line, prev_line, tmp []byte
-	var r *bufio.Reader = bufio.NewReader(Dkim.Mail.Body)
-	var err error
+type counterWriter struct {
+	c int
+	w io.Writer
+}
 
+func (c *counterWriter) Write(p []byte) (n int, err error) {
+	n, err = c.w.Write(p)
+	c.c += n
+	return
+}
+
+func sum(h hash.Hash, in io.Reader, relaxed bool) []byte {
+	r := textproto.NewReader(bufio.NewReader(in))
+	w := &counterWriter{w: h}
+
+	var (
+		emptyLinesCnt = 0
+		reduceWS      = regexp.MustCompile(`[ \t]+`)
+		sp            = []byte(" ")
+		wsp           = "\t "
+		crlf          = []byte("\r\n")
+	)
 	for {
-		line, err = r.ReadBytes('\n')
+		b, err := r.ReadLineBytes()
 		if err != nil {
-			break
-		}
-		if len(prev_line) > 0 {
-			if len(tmp) > 0 {
-				w.Write(tmp)
-				tmp = nil
+			if err == io.EOF {
+				break
 			}
-			w.Write(prev_line)
-			prev_line = nil
+			return nil // TODO proper error handling required as an IO error could lead to TEMPFAIL result
 		}
-		if Dkim.IsBodyRelaxed {
-			if len(line) > 2 {
-				line = bytes.TrimRight(line, "\t\r\n ") // remove WSP on the right side and trunk \r\n
-				if len(line) > 0 {
-					line = bytes.Replace(line, []byte("\t"), []byte(" "), -1)          // replace all \t to \s
-					line = regexp.MustCompile(`[ ]{2,}`).ReplaceAll(line, []byte(" ")) // replace double \s to one
-					if line[0] == ' ' {                                                // if the first symbol is \s, may be next too, replace all \s to one
-						line = append([]byte(" "), bytes.TrimLeft(line, " ")...)
-					}
-				}
-				line = append(line, '\r', '\n')
-			}
-			if len(line) > 2 {
-				prev_line = line
-			} else {
-				tmp = append(tmp, '\r', '\n')
-			}
-		} else {
-			prev_line = line
+		if relaxed {
+			b = bytes.TrimRight(reduceWS.ReplaceAll(b, sp), wsp)
 		}
+		// ignore all empty lines
+		if len(b) == 0 {
+			emptyLinesCnt++
+			continue
+		}
+		// return them back if next line is not empty
+		for ; emptyLinesCnt > 0; emptyLinesCnt-- {
+			w.Write(crlf)
+		}
+
+		w.Write(b)    // we do not expect any errors on hash side
+		w.Write(crlf) // ReadLineBytes eliding the final \n or \r\n from the returned string
 	}
-	if len(prev_line) > 0 {
-		if !bytes.Equal(prev_line, []byte("\r\n")) {
-			if len(tmp) > 0 {
-				w.Write(tmp)
-			}
-			w.Write(prev_line)
-		}
+	// Note that a completely empty or missing body is canonicalized as a single "CRLF"
+	if w.c == 0 {
+		w.Write(crlf)
 	}
+	return h.Sum(nil)
 }
 
 func (Dkim *DKIM) GetBodyHash() []byte {
 	if Dkim.bodyHash != nil {
 		return Dkim.bodyHash
 	}
-	var hasher hash.Hash = Dkim.GetHasher().New()
 
-	// for test
-	// fp, _ := os.OpenFile("/tmp/go.txt", os.O_WRONLY|os.O_TRUNC|os.O_CREATE, 0666)
-	// defer fp.Close()
-	// Dkim.readBodyTo(io.MultiWriter(fp, hasher))
+	Dkim.bodyHash = sum(Dkim.GetHasher().New(), Dkim.Mail.Body, Dkim.IsBodyRelaxed)
 
-	Dkim.readBodyTo(hasher)
-
-	Dkim.bodyHash = hasher.Sum(nil)
 	return Dkim.bodyHash
 }

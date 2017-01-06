@@ -7,26 +7,23 @@ import (
 )
 
 func TestParseEml(t *testing.T) {
-	{
-		f, _ := os.Open("_test_data/valid_1.eml")
-		defer f.Close()
-		m, err := ParseEml(bufio.NewReader(f))
-		if err != nil {
-			t.Fail()
-		}
-		if m.Verify() != true {
-			t.Fail()
-		}
+	samples := map[string]bool{
+		"_test_data/valid_1.eml":   true,
+		"_test_data/invalid_1.eml": false,
+		"_test_data/pass01.eml":    true,
+		"_test_data/pass02.eml":    true,
+		"_test_data/pass03.eml":    true,
 	}
-	{
-		f, _ := os.Open("_test_data/invalid_1.eml")
-		defer f.Close()
+	for sample, want := range samples {
+		f, _ := os.Open(sample)
 		m, err := ParseEml(bufio.NewReader(f))
 		if err != nil {
-			t.Fail()
+			t.Errorf("%v: %v", sample, err)
+			t.FailNow()
 		}
-		if m.Verify() == true {
-			t.Fail()
+		if got := m.Verify(); got != want {
+			t.Errorf("%v got %v, want %v", sample, got, want)
 		}
+		f.Close()
 	}
 }
