@@ -1,4 +1,0 @@
-gom "github.com/miekg/dns"
-gom "github.com/golang/glog"
-gom "github.com/bradfitz/gomemcache/memcache"
-gom "github.com/golang/groupcache/lru"

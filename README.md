@@ -1,58 +1,15 @@
-# Yet Another DKIM Verifier
+# DKIM verification ![Go Report Card](https://goreportcard.com/badge/github.com/redsift/dkim) [![GoDoc](https://godoc.org/github.com/cwredsift/dkim?status.svg)](https://godoc.org/github.com/redsift/dkim)
 
-## Why not?
-I found some DKIM solution for go, but I don’t like untested C binding and I have some time (thank you mr.Putin)
-I wrote this code for my pet project.
-
-## What can we do?
-
-We can verify DKIM headers very fast.
-It is about 44mb per second on my laptop.
-We support custom resolving and custom cache logic. 
+The project was started as a fork of https://github.com/kalloc/dkim
+Original plan was just fix few defects and create PR but eventually the project was totally overhauled.
 
 ## TODO
-- Support Length tag
-- Support Time
-- Support ExpireTime
-- Support Copied header fields (z=)
-- Sign
+- Simple header canonicalization
+- Copied header fields (z=) verification
 
-## How to use it?
-```
-package main
+# RFCs
 
-import (
-    "bufio"
-    "flag"
-    "fmt"
-    "github.com/kalloc/dkim"
-    "os"
-)
-
-// ./test path/to/emls/*.eml
-
-func main() {
-    var filename string
-    var fp *os.File
-    var err error
-    var dk *dkim.DKIM
-    flag.Parse()
-
-    for _, filename = range flag.Args() {
-        fmt.Printf("Check: %s — ", filename)
-        if fp, err = os.Open(filename); err != nil {
-            fmt.Printf("ERR-WRONG_FILE")
-        } else if dk = dkim.ParseEml(bufio.NewReader(fp)); dk == nil {
-            fmt.Printf("ERR-DKIM_NOT_FOUND")
-        } else if _, err = dk.GetPublicKey(); err != nil {
-            fmt.Printf("ERR-DKIM_PK_NOT_FOUND")
-        } else if dk.Verify() == false {
-            fmt.Printf("ERR-DKIM_NOT_VERIFIED (Body is %v, Sig is %v)", dk.Status.ValidBody, dk.Status.Valid)
-        } else {
-            fmt.Printf("OK")
-        }
-        fmt.Printf("\n")
-    }
-
-}
-```
+* [RFC6376 DomainKeys Identified Mail (DKIM) Signatures](https://tools.ietf.org/html/rfc6376)
+* [RFC4686 Analysis of Threats Motivating DomainKeys Identified Mail (DKIM)](https://tools.ietf.org/html/rfc4686)
+* [RFC5863 DomainKeys Identified Mail (DKIM) Development, Deployment, and Operations](https://tools.ietf.org/html/rfc5863)
+* [RFC7601 Message Header Field for Indicating Message Authentication Status](https://tools.ietf.org/html/rfc7601)
