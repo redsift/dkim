@@ -103,7 +103,6 @@ var (
 	ErrSignatureExpired            = errors.New("signature expired")
 	ErrInvalidSigningEntity        = errors.New("invalid signing entity")
 	ErrKeyUnavailable              = errors.New("key unavailable")
-	ErrKeyNotFound                 = errors.New("no key for signature")
 	ErrUnacceptableKey             = errors.New("unacceptable key")
 	ErrTestingMode                 = errors.New("domain is testing DKIM")
 	ErrKeyRevoked                  = errors.New("key revoked")
@@ -447,11 +446,6 @@ type PublicKeyQuery func(selector, domain string) (*PublicKey, *Result)
 func DNSTxtPublicKeyQuery(selector, domain string) (*PublicKey, *Result) {
 	records, err := net.LookupTXT(selector + "._domainkey." + domain)
 	if err != nil {
-		if dnsErr, ok := err.(*net.DNSError); ok {
-			if !dnsErr.Temporary() {
-				return nil, NewResult(Permerror, ErrKeyNotFound)
-			}
-		}
 		return nil, NewResult(Temperror, ErrKeyUnavailable)
 	}
 
@@ -481,7 +475,7 @@ func mapMatches(re *regexp.Regexp, s string, f func(g []string) string) []string
 
 func parsePublicKey(s string) (*PublicKey, error) {
 	if s == "" {
-		return nil, ErrKeyNotFound
+		return nil, ErrUnacceptableKey
 	}
 	const (
 		fData uint64 = 1 << iota

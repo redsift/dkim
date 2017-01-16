@@ -9,11 +9,13 @@ import (
 	"time"
 )
 
-var cache = map[string]struct {
+type cacheEntry struct {
 	s string
 	k *PublicKey
-	e error
-}{
+	r *Result
+}
+
+var cache = map[string]*cacheEntry{
 	`highgrade._domainkey.guerrillamail.com`: {s: `v=DKIM1; h=sha256; k=rsa; s=email; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAxp5MZYH1xvKFqy8nt87DzhbagNQ00zY2hp7S/UZN8mjUwhwqh2yTsV+yMSqP6q72D6/1ZSMyRNS3n3jnPbA8pHlJmHxsDJOVeuVGHemjSlLk5HNto73fDnr1TEyLEx3cqPUNn0CRYltSjwnx9xJmRY3htX8CCapiE5hDhu0yWOw3FqKUnADlKuzJCL7xOkWXHXffKJGCrA/3HxJkaeg0ghPxhVfRv04ex0jTy9knWqDfpsftp1sxbBtmdSowaxGunfly6Vcb+N4EFcnyCrzFjfy/WUNrnVuLvRGUUHXHhujVXzpR1cD6cNJowRDyyF8nhJvr+0w3eGV8TXx6FKsuAwIDAQAB`},
 	`20130820._domainkey.1e100.net`:          {s: `k=rsa; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAnOv6+Txyz+SEc7mT719QQtOj6g2MjpErYUGVrRGGc7f5rmE1cRP1lhwx8PVoHOiuRzyok7IqjvAub9kk9fBoE9uXJB1QaRdMnKz7W/UhWemK5TEUgW1xT5qtBfUIpFRL34h6FbHbeysb4szi7aTgerxI15o73cP5BoPVkQj4BQKkfTQYGNH03J5Db9uMqW/NNJ8fKCLKWO5C1e+NQ1lD6uwFCjJ6PWFmAIeUu9+LfYW89Tz1NnwtSkFC96Oky1cmnlBf4dhZ/Up/FMZmB9l7TA6gLEu6JijlDrNmx1o50WADPjjN4rGELLt3VuXn09y2piBPlZPU2SIiDQC0qX0JWQIDAQAB`},
 }
@@ -22,20 +24,18 @@ func CachedPublicKeyQuery(s, d string) (*PublicKey, *Result) {
 	n := s + "._domainkey." + d
 	c, found := cache[n]
 	if !found {
-		return nil, NewResult(Permerror, ErrKeyNotFound)
+		return nil, NewResult(Temperror, ErrKeyUnavailable)
 	}
-	if c.k != nil {
-		return c.k, nil
+	if c.k != nil || c.r != nil {
+		return c.k, c.r
 	}
-	if c.e != nil {
-		return nil, NewResult(Permerror, c.e)
+	k, e := parsePublicKey(c.s)
+	entry := &cacheEntry{k: k}
+	if e != nil {
+		entry.r = NewResult(Temperror, e)
 	}
-	c.k, c.e = parsePublicKey(c.s)
-	cache[n] = c
-	if c.e != nil {
-		return nil, NewResult(Permerror, c.e)
-	}
-	return c.k, nil
+	cache[n] = entry
+	return entry.k, entry.r
 }
 
 func TestMain(m *testing.M) {
@@ -61,11 +61,10 @@ func TestDnsTxtPublicKeyQuery(t *testing.T) {
 	}{
 		{"highgrade", "guerrillamail.com", mustKey("highgrade", "guerrillamail.com"), nil},
 		{"20130820", "1e100.net", mustKey("20130820", "1e100.net"), nil},
-		{"permerror", "example.com", nil, NewResult(Permerror, ErrKeyNotFound)},
+		{"permerror", "example.com", nil, NewResult(Temperror, ErrKeyUnavailable)},
 	}
 	for i, want := range samples {
 		if k, r := DNSTxtPublicKeyQuery(want.s, want.d); !reflect.DeepEqual(k, want.k) || !reflect.DeepEqual(r, want.r) {
-
 			t.Errorf("sample#%d got {%v %q}, want {%v %q}", i, k, r, want.k, want.r)
 		}
 	}
@@ -76,7 +75,7 @@ func TestParsePublicKey(t *testing.T) {
 		k *PublicKey
 		e error
 	}{
-		"":        {nil, ErrKeyNotFound},
+		"":        {nil, ErrUnacceptableKey},
 		"v=1":     {nil, ErrUnacceptableKey},
 		"v=DKIM1": {nil, ErrUnacceptableKey},
 		"h=md5":   {nil, ErrUnacceptableKey},
