@@ -1,6 +1,7 @@
 # DKIM verification [![Go Report Card](https://goreportcard.com/badge/github.com/redsift/dkim)](https://goreportcard.com/report/github.com/redsift/dkim) [![GoDoc](https://godoc.org/github.com/cwredsift/dkim?status.svg)](https://godoc.org/github.com/redsift/dkim)
 
 The project was started as a fork of https://github.com/kalloc/dkim
+
 Original plan was just fix few defects and create PR but eventually the project was totally overhauled.
 
 ## TODO

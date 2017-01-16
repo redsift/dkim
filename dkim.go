@@ -159,7 +159,7 @@ var (
 	// z= Copied header fields
 	// https://tools.ietf.org/html/rfc6376#page-25
 	reCopiedHeaders = regexp.MustCompile(`\|?\s*([^[:cntrl:]: ]+):([^\s\|]+)\s*`)
-	// a sligthly relaxed version of key-h-tag or key-s-tag
+	// a slightly relaxed version of key-h-tag or key-s-tag
 	// https://tools.ietf.org/html/rfc6376#page-27
 	reKeyXTag       = regexp.MustCompile(`:?\s*([[:alnum:]](?:[[:alnum:]-]*[[:alnum:]])?)\s*`)
 	reKeySTag       = regexp.MustCompile(`:?\s*([[:alnum:]*](?:[[:alnum:]-]*[[:alnum:]])?)?\s*`)
