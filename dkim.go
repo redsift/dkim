@@ -613,7 +613,7 @@ func compareDomains(u, d string, strict bool) bool {
 	return strings.HasSuffix(u, d)
 }
 
-func (s *Signature) verify(m *mail.Message, options ...VerifyOption) (result *Result) {
+func (s *Signature) Verify(m *mail.Message, options ...VerifyOption) (result *Result) {
 	// TODO cache result
 	if s == nil {
 		return NewResult(None, ErrSignatureNotFound)

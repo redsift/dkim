@@ -240,7 +240,7 @@ func TestVerify(t *testing.T) {
 	{
 		var s *Signature
 		want := NewResult(None, ErrSignatureNotFound)
-		if got := s.verify(nil); !reflect.DeepEqual(got, want) {
+		if got := s.Verify(nil); !reflect.DeepEqual(got, want) {
 			t.Errorf("nil: got %q, want %q", got, want)
 		}
 	}
@@ -267,7 +267,7 @@ func TestVerify(t *testing.T) {
 			t.Errorf("%v: `%s` got %v", sample, v, err)
 		}
 
-		if got := s.verify(m); !reflect.DeepEqual(got, want) {
+		if got := s.Verify(m); !reflect.DeepEqual(got, want) {
 			t.Errorf("%v got %q, want %q", sample, got, want)
 		}
 		f.Close()
