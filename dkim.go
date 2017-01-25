@@ -195,7 +195,7 @@ func decodeBase64(s string) ([]byte, error) {
 	return base64.StdEncoding.DecodeString(strings.Replace(s, " ", "", -1))
 }
 
-func parseSignature(k, v string) (*Signature, error) {
+func ParseSignature(k, v string) (*Signature, error) {
 	if v == "" {
 		return nil, ErrSignatureNotFound
 	}

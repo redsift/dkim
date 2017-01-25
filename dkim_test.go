@@ -194,7 +194,7 @@ func TestParseSignature(t *testing.T) {
 		},
 	}
 	for h, want := range goodGirls {
-		got, err := parseSignature("DKIM-Signature", h)
+		got, err := ParseSignature("DKIM-Signature", h)
 		if err != nil {
 			t.Errorf("for `%.20s...` got error `%s`", h, err)
 			t.FailNow()
@@ -229,7 +229,7 @@ func TestParseSignature(t *testing.T) {
 		`v=1; a=rsa-sha256; d=d; s=brisbane; h=to:subject:date; bh=MA==; b=MA==`: ErrFromNotSigned,
 	}
 	for h, want := range badBoys {
-		_, got := parseSignature("DKIM-Signature", h)
+		_, got := ParseSignature("DKIM-Signature", h)
 		if got != want {
 			t.Errorf("for `%.30s...` got %q, want %q", h, got, want)
 		}
@@ -262,7 +262,7 @@ func TestVerify(t *testing.T) {
 		}
 		k := "DKIM-Signature"
 		v := m.Header.Get(k)
-		s, err := parseSignature(k, v)
+		s, err := ParseSignature(k, v)
 		if err != nil {
 			t.Errorf("%v: `%s` got %v", sample, v, err)
 		}
