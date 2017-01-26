@@ -787,17 +787,15 @@ func Verify(hdr string, msg *mail.Message, opts ...VerifyOption) *Result {
 }
 
 // String returns textual representation of DKIM verification result.
-// The representation conformed with RFC7601
+// The representation is NOT conformed with RFC7601, but is compilation of
+// values recommended by RFC7601 and form defined for Received-SPF by RFC7208
 func (r *Result) String() string {
 	if r == nil {
 		return ""
 	}
-	p := append(make([]string, 0, 4), "dkim="+r.Result.String())
-	if r.Reason == nil {
-		p = append(p, "(good signature)")
-	}
+	p := append(make([]string, 0, 4), r.Result.String())
 	if r.Reason != nil {
-		p = append(p, "("+r.Reason.Error()+")")
+		p = append(p, "problem="+r.Reason.Error())
 	}
 	if r.Signature != nil {
 		if r.Signature.signerDomain != "" {
@@ -808,5 +806,5 @@ func (r *Result) String() string {
 		}
 	}
 
-	return strings.Join(p, " ")
+	return strings.Join(p, "; ")
 }

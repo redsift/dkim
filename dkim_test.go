@@ -339,19 +339,19 @@ func TestResultString(t *testing.T) {
 		want   string
 	}{
 		{nil, ""},
-		{NewResult(None, ErrSignatureNotFound, nil), "dkim=none (signature not found)"},
-		{NewResult(None, nil, nil), "dkim=none (good signature)"},
-		{NewResult(Pass, nil, nil), "dkim=pass (good signature)"},
+		{NewResult(None, ErrSignatureNotFound, nil), "none; problem=signature not found"},
+		{NewResult(None, nil, nil), "none"},
+		{NewResult(Pass, nil, nil), "pass"},
 		{NewResult(Pass, nil, &Signature{
 			signerDomain: "example.com",
-		}), "dkim=pass (good signature) header.d=example.com"},
+		}), "pass; header.d=example.com"},
 		{NewResult(Pass, nil, &Signature{
 			userIdentifier: "jdoe@example.com",
-		}), "dkim=pass (good signature) header.i=jdoe@example.com"},
+		}), "pass; header.i=jdoe@example.com"},
 		{NewResult(Pass, nil, &Signature{
 			signerDomain:   "example.com",
 			userIdentifier: "jdoe@example.com",
-		}), "dkim=pass (good signature) header.d=example.com header.i=jdoe@example.com"},
+		}), "pass; header.d=example.com; header.i=jdoe@example.com"},
 	}
 	for i, sample := range samples {
 		got := sample.result.String()
