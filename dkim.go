@@ -154,6 +154,9 @@ var (
 	Queries = map[string]PublicKeyQuery{
 		qDNSTxt: DNSTxtPublicKeyQuery,
 	}
+)
+
+var (
 	reReduceWS          = regexp.MustCompile(`[ \t]+`)
 	reUnfoldAndReduceWS = regexp.MustCompile(`[\s]+`)
 	sp                  = []byte(" ")
@@ -447,11 +450,13 @@ func SignatureTimingOption() VerifyOption {
 // "com" and "co.uk" could be ignored.
 // The list of unacceptable domains SHOULD be configurable.
 func InvalidSigningEntityOption(domains ...string) VerifyOption {
+	index := make(map[string]struct{}, len(domains))
+	for _, d := range domains {
+		index[d] = struct{}{}
+	}
 	return func(s *Signature, _ *PublicKey, _ *mail.Message) *Result {
-		for _, d := range domains {
-			if s.signerDomain == d {
-				return NewResult(Permerror, ErrInvalidSigningEntity, s)
-			}
+		if _, found := index[s.signerDomain]; found {
+			return NewResult(Permerror, ErrInvalidSigningEntity, s)
 		}
 		return nil
 	}
