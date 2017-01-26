@@ -19,18 +19,24 @@ import (
 	"time"
 )
 
+// Result holds all details about result of DKIM signature verification
 type Result struct {
-	Result ResultCode
-	Reason error
+	Result    ResultCode
+	Reason    error
+	Signature *Signature
 }
 
-func NewResult(r ResultCode, e error) *Result {
+// NewResult returns new *Result with provided details
+func NewResult(r ResultCode, e error, s *Signature) *Result {
 	return &Result{
-		Result: r,
-		Reason: e,
+		Result:    r,
+		Reason:    e,
+		Signature: s,
 	}
 }
 
+// ResultCode presents a signature verification result in a form defined by
+// RFC7601 in 2.7.1. DKIM and DomainKeys
 type ResultCode uint8
 
 // DKIM Verification Results
@@ -89,6 +95,7 @@ func (r ResultCode) String() string {
 	}
 }
 
+// Possible reasons of failed verification
 var (
 	ErrSignatureNotFound           = errors.New("signature not found")
 	ErrBadSignature                = errors.New("bad signature")
@@ -110,6 +117,7 @@ var (
 	ErrNoSignedFields              = errors.New("no signed fields")
 )
 
+// Signature holds parsed DKIM signature
 type Signature struct {
 	header         string
 	emptyHashValue string
@@ -129,7 +137,7 @@ type Signature struct {
 	query          PublicKeyQuery
 }
 
-// https://tools.ietf.org/html/rfc6376#section-3.6.1
+// PublicKey holds parsed public key
 type PublicKey struct {
 	algorithms []string       // [] means "allowing all"
 	key        *rsa.PublicKey // supporting "rsa" only
@@ -142,6 +150,10 @@ type PublicKey struct {
 const qDNSTxt = "dns/txt"
 
 var (
+	// Queries holds implementations of public key queries
+	Queries = map[string]PublicKeyQuery{
+		qDNSTxt: DNSTxtPublicKeyQuery,
+	}
 	reReduceWS          = regexp.MustCompile(`[ \t]+`)
 	reUnfoldAndReduceWS = regexp.MustCompile(`[\s]+`)
 	sp                  = []byte(" ")
@@ -164,10 +176,7 @@ var (
 	reKeySTag       = regexp.MustCompile(`:?\s*([[:alnum:]*](?:[[:alnum:]-]*[[:alnum:]])?)?\s*`)
 	reSignedHeaders = regexp.MustCompile(`:?\s*([^[:cntrl:]: ]+)\s*`)
 	timeZero        = time.Unix(0, 0)
-	Queries         = map[string]PublicKeyQuery{
-		qDNSTxt: DNSTxtPublicKeyQuery,
-	}
-	algorithms = map[string]*algorithm{
+	algorithms      = map[string]*algorithm{
 		"rsa-sha1":   {crypto.SHA1, crypto.SHA1.New()},
 		"rsa-sha256": {crypto.SHA256, crypto.SHA256.New()},
 	}
@@ -195,7 +204,7 @@ func decodeBase64(s string) ([]byte, error) {
 	return base64.StdEncoding.DecodeString(strings.Replace(s, " ", "", -1))
 }
 
-func ParseSignature(k, v string) (*Signature, error) {
+func parseSignature(k, v string) (*Signature, error) {
 	if v == "" {
 		return nil, ErrSignatureNotFound
 	}
@@ -389,19 +398,20 @@ func bodyHash(in io.Reader, h hash.Hash, relaxed bool) ([]byte, error) {
 		}
 		// return them back if next line is not empty
 		for ; emptyLinesCnt > 0; emptyLinesCnt-- {
-			w.Write(crlf)
+			_, _ = w.Write(crlf)
 		}
 
-		w.Write(b)    // we do not expect any errors on hash side
-		w.Write(crlf) // ReadLineBytes eliding the final \n or \r\n from the returned string
+		_, _ = w.Write(b)    // we do not expect any errors on hash side
+		_, _ = w.Write(crlf) // ReadLineBytes eliding the final \n or \r\n from the returned string
 	}
 	// Note that a completely empty or missing body is canonicalized as a single "CRLF"
 	if w.c == 0 {
-		w.Write(crlf)
+		_, _ = w.Write(crlf)
 	}
 	return h.Sum(nil), nil
 }
 
+// VerifyOption provides way to extend signature verification.
 // Verifiers MAY ignore the DKIM-Signature header field and return PERMFAIL
 // (unacceptable signature header) for any other reason, for example, if
 // the signature does not sign header fields that the Verifier views to be
@@ -409,6 +419,7 @@ func bodyHash(in io.Reader, h hash.Hash, relaxed bool) ([]byte, error) {
 // certain attacks may be possible that the Verifier would prefer to avoid.
 type VerifyOption func(s *Signature, k *PublicKey, m *mail.Message) *Result
 
+// SignatureTimingOption checks if signature is expired
 // Verifiers MAY ignore the DKIM-Signature header field and return
 // PERMFAIL (signature expired) if it contains an "x=" tag and
 // the signature has expired.
@@ -416,15 +427,20 @@ func SignatureTimingOption() VerifyOption {
 	return func(s *Signature, _ *PublicKey, _ *mail.Message) *Result {
 		now := time.Now()
 		if s.timestamp.After(now) {
-			return NewResult(Permerror, ErrBadSignature)
+			return NewResult(Permerror, ErrBadSignature, s)
 		}
-		if s.expiration.After(timeZero) && s.expiration.Before(now) {
-			return NewResult(Permerror, ErrSignatureExpired)
+		expPresent := s.expiration.After(timeZero)
+		if expPresent && s.expiration.Before(now) {
+			return NewResult(Permerror, ErrSignatureExpired, s)
+		}
+		if expPresent && s.timestamp.After(timeZero) && s.expiration.Before(s.timestamp) {
+			return NewResult(Permerror, ErrBadSignature, s)
 		}
 		return nil
 	}
 }
 
+// InvalidSigningEntityOption checks if domain of "i=" equals to "d=".
 // Verifiers MAY ignore the DKIM-Signature header field if the domain
 // used by the Signer in the "d=" tag is not associated with a valid
 // signing entity.  For example, signatures with "d=" values such as
@@ -434,24 +450,26 @@ func InvalidSigningEntityOption(domains ...string) VerifyOption {
 	return func(s *Signature, _ *PublicKey, _ *mail.Message) *Result {
 		for _, d := range domains {
 			if s.signerDomain == d {
-				return NewResult(Permerror, ErrInvalidSigningEntity)
+				return NewResult(Permerror, ErrInvalidSigningEntity, s)
 			}
 		}
 		return nil
 	}
 }
 
+// PublicKeyQuery defines API for implementation of "q=".
 type PublicKeyQuery func(selector, domain string) (*PublicKey, *Result)
 
+// DNSTxtPublicKeyQuery provides implementation of "dns/txt" query.
 func DNSTxtPublicKeyQuery(selector, domain string) (*PublicKey, *Result) {
 	records, err := net.LookupTXT(selector + "._domainkey." + domain)
 	if err != nil {
-		return nil, NewResult(Temperror, ErrKeyUnavailable)
+		return nil, NewResult(Temperror, ErrKeyUnavailable, nil)
 	}
 
 	key, err := parsePublicKey(strings.Join(records, ""))
 	if err != nil {
-		return nil, NewResult(Permerror, err)
+		return nil, NewResult(Permerror, err, nil)
 	}
 
 	return key, nil
@@ -473,6 +491,8 @@ func mapMatches(re *regexp.Regexp, s string, f func(g []string) string) []string
 	return a
 }
 
+// parsePublicKey parses textual representation of the key
+// See https://tools.ietf.org/html/rfc6376#section-3.6.1 for details
 func parsePublicKey(s string) (*PublicKey, error) {
 	if s == "" {
 		return nil, ErrUnacceptableKey
@@ -578,11 +598,11 @@ func (s *Signature) verifyBodyHash(r io.Reader) *Result {
 
 	bh, err := bodyHash(r, s.algorithm.f, s.relaxedBody)
 	if err != nil {
-		return NewResult(Temperror, ErrInputError)
+		return NewResult(Temperror, ErrInputError, s)
 	}
 
 	if !bytes.Equal(bh, s.bodyHash) {
-		return NewResult(Fail, ErrBadSignature)
+		return NewResult(Fail, ErrBadSignature, s)
 	}
 
 	return nil
@@ -613,10 +633,10 @@ func compareDomains(u, d string, strict bool) bool {
 	return strings.HasSuffix(u, d)
 }
 
-func (s *Signature) Verify(m *mail.Message, options ...VerifyOption) (result *Result) {
+func (s *Signature) verify(m *mail.Message, options ...VerifyOption) (result *Result) {
 	// TODO cache result
 	if s == nil {
-		return NewResult(None, ErrSignatureNotFound)
+		return NewResult(None, ErrSignatureNotFound, s)
 	}
 
 	var pkey *PublicKey
@@ -625,17 +645,17 @@ func (s *Signature) Verify(m *mail.Message, options ...VerifyOption) (result *Re
 	}
 
 	if pkey.revoked {
-		return NewResult(Fail, ErrKeyRevoked)
+		return NewResult(Fail, ErrKeyRevoked, s)
 	}
 
 	// Verifiers MUST NOT treat messages from Signers in testing mode
 	// differently from unsigned email
 	if pkey.testing {
-		return NewResult(None, ErrTestingMode)
+		return NewResult(None, ErrTestingMode, s)
 	}
 
 	if ok := compareDomains(s.userIdentifier, s.signerDomain, pkey.strict); !ok {
-		return NewResult(Permerror, ErrDomainMismatch)
+		return NewResult(Permerror, ErrDomainMismatch, s)
 	}
 
 	// Fail fast here, provided all VerifyOption is quite fast
@@ -695,15 +715,15 @@ func (s *Signature) Verify(m *mail.Message, options ...VerifyOption) (result *Re
 	s.algorithm.f.Reset()
 	w := s.algorithm.f
 	for _, k := range s.headers {
-		w.Write(canonicalizedHeader(k, getHeader(k), s.relaxedHeader))
-		w.Write(crlf)
+		_, _ = w.Write(canonicalizedHeader(k, getHeader(k), s.relaxedHeader))
+		_, _ = w.Write(crlf)
 	}
-	w.Write(canonicalizedHeader(s.header, s.emptyHashValue, s.relaxedHeader))
+	_, _ = w.Write(canonicalizedHeader(s.header, s.emptyHashValue, s.relaxedHeader))
 	if e := rsa.VerifyPKCS1v15(pkey.key, s.algorithm.id, s.algorithm.f.Sum(nil), s.hash); e != nil {
-		return NewResult(Fail, ErrBadSignature)
+		return NewResult(Fail, ErrBadSignature, s)
 	}
 
-	return NewResult(Pass, nil)
+	return NewResult(Pass, nil, s)
 }
 
 func canonicalizedHeader(k, v string, relaxed bool) []byte {
@@ -738,4 +758,50 @@ func canonicalizedHeader(k, v string, relaxed bool) []byte {
 	h = append(h, colon...)
 	h = append(h, b...)
 	return h
+}
+
+// Verify extracts DKIM signature from message, verifies it and returns Result
+// of verification in accordance with RFC6376 (DKIM Signatures)
+func Verify(hdr string, msg *mail.Message, opts ...VerifyOption) *Result {
+	// TODO verify multiple signatures
+	if msg == nil {
+		return nil
+	}
+	sigs := msg.Header[textproto.CanonicalMIMEHeaderKey(hdr)]
+	if len(sigs) == 0 {
+		return NewResult(None, nil, nil)
+	}
+	var (
+		s   *Signature
+		err error
+	)
+	if s, err = parseSignature(hdr, sigs[len(sigs)-1]); err != nil {
+		return NewResult(Permerror, err, nil)
+	}
+	return s.verify(msg, opts...)
+}
+
+// String returns textual representation of DKIM verification result.
+// The representation conformed with RFC7601
+func (r *Result) String() string {
+	if r == nil {
+		return ""
+	}
+	p := append(make([]string, 0, 4), "dkim="+r.Result.String())
+	if r.Reason == nil {
+		p = append(p, "(good signature)")
+	}
+	if r.Reason != nil {
+		p = append(p, "("+r.Reason.Error()+")")
+	}
+	if r.Signature != nil {
+		if r.Signature.signerDomain != "" {
+			p = append(p, "header.d="+r.Signature.signerDomain)
+		}
+		if r.Signature.userIdentifier != "" {
+			p = append(p, "header.i="+r.Signature.userIdentifier)
+		}
+	}
+
+	return strings.Join(p, " ")
 }

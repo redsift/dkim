@@ -24,7 +24,7 @@ func CachedPublicKeyQuery(s, d string) (*PublicKey, *Result) {
 	n := s + "._domainkey." + d
 	c, found := cache[n]
 	if !found {
-		return nil, NewResult(Temperror, ErrKeyUnavailable)
+		return nil, NewResult(Temperror, ErrKeyUnavailable, nil)
 	}
 	if c.k != nil || c.r != nil {
 		return c.k, c.r
@@ -32,7 +32,7 @@ func CachedPublicKeyQuery(s, d string) (*PublicKey, *Result) {
 	k, e := parsePublicKey(c.s)
 	entry := &cacheEntry{k: k}
 	if e != nil {
-		entry.r = NewResult(Temperror, e)
+		entry.r = NewResult(Temperror, e, nil)
 	}
 	cache[n] = entry
 	return entry.k, entry.r
@@ -61,11 +61,11 @@ func TestDnsTxtPublicKeyQuery(t *testing.T) {
 	}{
 		{"highgrade", "guerrillamail.com", mustKey("highgrade", "guerrillamail.com"), nil},
 		{"20130820", "1e100.net", mustKey("20130820", "1e100.net"), nil},
-		{"permerror", "example.com", nil, NewResult(Temperror, ErrKeyUnavailable)},
+		{"permerror", "example.com", nil, NewResult(Temperror, ErrKeyUnavailable, nil)},
 	}
 	for i, want := range samples {
 		if k, r := DNSTxtPublicKeyQuery(want.s, want.d); !reflect.DeepEqual(k, want.k) || !reflect.DeepEqual(r, want.r) {
-			t.Errorf("sample#%d got {%v %q}, want {%v %q}", i, k, r, want.k, want.r)
+			t.Errorf("sample#%d got {%v %v}, want {%v %v}", i, k, r, want.k, want.r)
 		}
 	}
 }
@@ -98,7 +98,7 @@ func TestParsePublicKey(t *testing.T) {
 	}
 	for s, want := range samples {
 		if k, e := parsePublicKey(s); !reflect.DeepEqual(k, want.k) || e != want.e {
-			t.Errorf("for `%s` got {%q %v}, want %q", s, k, e, want)
+			t.Errorf("for `%s` got {%v %v}, want %v", s, k, e, want)
 		}
 	}
 }
@@ -194,7 +194,7 @@ func TestParseSignature(t *testing.T) {
 		},
 	}
 	for h, want := range goodGirls {
-		got, err := ParseSignature("DKIM-Signature", h)
+		got, err := parseSignature("DKIM-Signature", h)
 		if err != nil {
 			t.Errorf("for `%.20s...` got error `%s`", h, err)
 			t.FailNow()
@@ -229,7 +229,7 @@ func TestParseSignature(t *testing.T) {
 		`v=1; a=rsa-sha256; d=d; s=brisbane; h=to:subject:date; bh=MA==; b=MA==`: ErrFromNotSigned,
 	}
 	for h, want := range badBoys {
-		_, got := ParseSignature("DKIM-Signature", h)
+		_, got := parseSignature("DKIM-Signature", h)
 		if got != want {
 			t.Errorf("for `%.30s...` got %q, want %q", h, got, want)
 		}
@@ -239,19 +239,19 @@ func TestParseSignature(t *testing.T) {
 func TestVerify(t *testing.T) {
 	{
 		var s *Signature
-		want := NewResult(None, ErrSignatureNotFound)
-		if got := s.Verify(nil); !reflect.DeepEqual(got, want) {
-			t.Errorf("nil: got %q, want %q", got, want)
+		want := NewResult(None, ErrSignatureNotFound, nil)
+		if got := s.verify(nil); !reflect.DeepEqual(got, want) {
+			t.Errorf("nil: got %v, want %v", got, want)
 		}
 	}
 
 	samples := map[string]*Result{
-		"_samples/s001.eml": NewResult(Pass, nil),
-		"_samples/s002.eml": NewResult(Pass, nil),
-		"_samples/s003.eml": NewResult(Pass, nil),
-		"_samples/s004.eml": NewResult(Pass, nil),
-		"_samples/s005.eml": NewResult(Fail, ErrBadSignature),
-		"_samples/s006.eml": NewResult(Fail, ErrBadSignature),
+		"_samples/s001.eml": NewResult(Pass, nil, nil),
+		"_samples/s002.eml": NewResult(Pass, nil, nil),
+		"_samples/s003.eml": NewResult(Pass, nil, nil),
+		"_samples/s004.eml": NewResult(Pass, nil, nil),
+		"_samples/s005.eml": NewResult(Fail, ErrBadSignature, nil),
+		"_samples/s006.eml": NewResult(Fail, ErrBadSignature, nil),
 	}
 	for sample, want := range samples {
 		f, _ := os.Open(sample)
@@ -260,18 +260,13 @@ func TestVerify(t *testing.T) {
 			t.Errorf("%v: %v", sample, e)
 			continue
 		}
-		k := "DKIM-Signature"
-		v := m.Header.Get(k)
-		s, err := ParseSignature(k, v)
-		if err != nil {
-			t.Errorf("%v: `%s` got %v", sample, v, err)
+		got := Verify("DKIM-Signature", m)
+		// remove Signature and make DeepEqual useful
+		got.Signature = nil
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("%v got `%v`, want `%v`", sample, got, want)
 		}
-
-		if got := s.Verify(m); !reflect.DeepEqual(got, want) {
-			t.Errorf("%v got %q, want %q", sample, got, want)
-		}
-		f.Close()
-
+		_ = f.Close()
 	}
 }
 
@@ -281,13 +276,15 @@ func TestInvalidSigningEntityOption(t *testing.T) {
 		s *Signature
 		r *Result
 	}{
-		{&Signature{signerDomain: "com"}, NewResult(Permerror, ErrInvalidSigningEntity)},
-		{&Signature{signerDomain: "ru"}, NewResult(Permerror, ErrInvalidSigningEntity)},
+		{&Signature{signerDomain: "com"},
+			NewResult(Permerror, ErrInvalidSigningEntity, &Signature{signerDomain: "com"})},
+		{&Signature{signerDomain: "ru"},
+			NewResult(Permerror, ErrInvalidSigningEntity, &Signature{signerDomain: "ru"})},
 		{&Signature{signerDomain: "io"}, nil},
 	}
 	for i, want := range samples {
 		if got := o(want.s, nil, nil); !reflect.DeepEqual(got, want.r) {
-			t.Errorf("sample#%d got %q, want %q", i, got, want.r)
+			t.Errorf("sample#%d got %v, want %v", i, got, want.r)
 		}
 	}
 }
@@ -298,15 +295,20 @@ func TestSignatureTimingOption(t *testing.T) {
 		s *Signature
 		r *Result
 	}{
-		{&Signature{timestamp: time.Now().Add(1 * time.Minute)}, NewResult(Permerror, ErrBadSignature)},
+		{&Signature{timestamp: time.Now().Add(1 * time.Minute)}, NewResult(Permerror, ErrBadSignature, nil)},
 		{&Signature{expiration: time.Now().Add(1 * time.Minute)}, nil},
 		{&Signature{timestamp: time.Now().Add(-1 * time.Minute)}, nil},
 		{&Signature{}, nil},
-		{&Signature{expiration: time.Now().Add(-1 * time.Minute)}, NewResult(Permerror, ErrSignatureExpired)},
+		{&Signature{expiration: time.Now().Add(-1 * time.Minute)}, NewResult(Permerror, ErrSignatureExpired, nil)},
 	}
 	for i, want := range samples {
-		if got := o(want.s, nil, nil); !reflect.DeepEqual(got, want.r) {
-			t.Errorf("sample#%d got %q, want %q", i, got, want.r)
+		got := o(want.s, nil, nil)
+		if got != nil {
+			// remove Signature and make DeepEqual useful
+			got.Signature = nil
+		}
+		if !reflect.DeepEqual(got, want.r) {
+			t.Errorf("sample#%d got %v, want %v", i, got, want.r)
 		}
 	}
 }
@@ -327,6 +329,34 @@ func TestCompareDomains(t *testing.T) {
 	for i, want := range samples {
 		if got := compareDomains(want.u, want.d, want.strict); got != want.got {
 			t.Errorf("sample#%d got %v, want %v", i, got, want.got)
+		}
+	}
+}
+
+func TestResultString(t *testing.T) {
+	samples := []struct {
+		result *Result
+		want   string
+	}{
+		{nil, ""},
+		{NewResult(None, ErrSignatureNotFound, nil), "dkim=none (signature not found)"},
+		{NewResult(None, nil, nil), "dkim=none (good signature)"},
+		{NewResult(Pass, nil, nil), "dkim=pass (good signature)"},
+		{NewResult(Pass, nil, &Signature{
+			signerDomain: "example.com",
+		}), "dkim=pass (good signature) header.d=example.com"},
+		{NewResult(Pass, nil, &Signature{
+			userIdentifier: "jdoe@example.com",
+		}), "dkim=pass (good signature) header.i=jdoe@example.com"},
+		{NewResult(Pass, nil, &Signature{
+			signerDomain:   "example.com",
+			userIdentifier: "jdoe@example.com",
+		}), "dkim=pass (good signature) header.d=example.com header.i=jdoe@example.com"},
+	}
+	for i, sample := range samples {
+		got := sample.result.String()
+		if got != sample.want {
+			t.Errorf("sample#%d got `%s`, want `%s`", i, got, sample.want)
 		}
 	}
 }
