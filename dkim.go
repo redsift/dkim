@@ -691,31 +691,7 @@ func (s *Signature) verify(m *mail.Message, options ...VerifyOption) (result *Re
 
 	// 5.4.2.  Signatures Involving Multiple Instances of a Field
 	// https://tools.ietf.org/html/rfc6376#section-5.4.2
-	getHeader := func(h mail.Header) func(k string) string {
-		i := make(map[string]int, len(h))
-		return func(key string) string {
-			k := textproto.CanonicalMIMEHeaderKey(key)
-			var (
-				a     []string
-				found bool
-				n     int
-			)
-			a, found = h[k]
-			if !found {
-				return ""
-			}
-			n, found = i[k]
-			if n < 0 {
-				return ""
-			}
-			if !found {
-				n = len(a)
-			}
-			n--
-			i[k] = n
-			return a[n]
-		}
-	}(m.Header)
+	getHeader := getHeaderFunc(m.Header)
 
 	s.algorithm.f.Reset()
 	w := s.algorithm.f
@@ -729,6 +705,36 @@ func (s *Signature) verify(m *mail.Message, options ...VerifyOption) (result *Re
 	}
 
 	return NewResult(Pass, nil, s)
+}
+
+func getHeaderFunc(h mail.Header) func(k string) string {
+	i := make(map[string]int, len(h))
+	return func(key string) string {
+		k := textproto.CanonicalMIMEHeaderKey(key)
+		var (
+			a     []string
+			found bool
+			n     int
+		)
+		a, found = h[k]
+		if !found {
+			return ""
+		}
+		n, found = i[k]
+		if n < 0 {
+			return ""
+		}
+		if !found {
+			n = len(a) - 1
+		}
+		var v string
+		if n >= 0 {
+			v = a[n]
+		}
+		n--
+		i[k] = n
+		return v
+	}
 }
 
 func canonicalizedHeader(k, v string, relaxed bool) []byte {

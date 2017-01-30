@@ -360,3 +360,54 @@ func TestResultString(t *testing.T) {
 		}
 	}
 }
+
+func TestGetHeaderFunc(t *testing.T) {
+	samples := []struct {
+		header mail.Header
+		keys   []string
+		want   []string
+	}{
+		{
+			header: mail.Header(map[string][]string{
+				"From": []string{"from-0"},
+			}),
+			keys: []string{"from"},
+			want: []string{"from-0"},
+		},
+		{
+			header: mail.Header(map[string][]string{
+				"From": []string{"from-0", "from-1"},
+			}),
+			keys: []string{"from", "from"},
+			want: []string{"from-1", "from-0"},
+		},
+		{
+			header: mail.Header(map[string][]string{
+				"From": []string{"from-0"},
+			}),
+			keys: []string{"from", "from"},
+			want: []string{"from-0", ""},
+		},
+		{
+			header: mail.Header(map[string][]string{
+				"From": []string{},
+			}),
+			keys: []string{"from", "from"},
+			want: []string{"", ""},
+		},
+		{
+			keys: []string{"from", "from"},
+			want: []string{"", ""},
+		},
+	}
+
+	for i, s := range samples {
+		getHeader := getHeaderFunc(s.header)
+		for j := range s.keys {
+			got := getHeader(s.keys[j])
+			if got != s.want[j] {
+				t.Errorf("#%d.%d (%s) got `%s`, want `%s`", i, j, s.keys[j], got, s.want[j])
+			}
+		}
+	}
+}
