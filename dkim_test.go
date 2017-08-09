@@ -5,6 +5,7 @@ import (
 	"net/mail"
 	"os"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 )
@@ -130,7 +131,8 @@ func TestParseSignature(t *testing.T) {
        Subject:demo=20run|Date:July=205,=202005=203:44:08=20PM=20-0700;
       bh=MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTI=;
 	  b=`,
-			algorithm: algorithms["rsa-sha256"],
+			algorithm:   algorithms["rsa-sha256"].hash(),
+			algorithmID: algorithms["rsa-sha256"].id,
 			hash: []byte{119, 55, 85, 200, 231, 192, 40, 39, 75,
 				93, 210, 78, 115, 209, 182, 171, 194, 232, 93, 41, 68, 158, 36,
 				155, 106, 255, 178, 185, 78, 51, 25, 231, 171, 184, 61, 52, 150,
@@ -169,7 +171,8 @@ func TestParseSignature(t *testing.T) {
 			       Subject:demo=20run|Date:July=205,=202005=203:44:08=20PM=20-0700;
 			      bh=MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTI=;
 				  b=`,
-			algorithm: algorithms["rsa-sha1"],
+			algorithm:   algorithms["rsa-sha1"].hash(),
+			algorithmID: algorithms["rsa-sha1"].id,
 			hash: []byte{119, 55, 85, 200, 231, 192, 40, 39,
 				75, 93, 210, 78, 115, 209, 182, 171, 194, 232, 93,
 				41, 68, 158, 36, 155, 106, 255, 178, 185, 78, 51,
@@ -369,28 +372,28 @@ func TestGetHeaderFunc(t *testing.T) {
 	}{
 		{
 			header: mail.Header(map[string][]string{
-				"From": []string{"from-0"},
+				"From": {"from-0"},
 			}),
 			keys: []string{"from"},
 			want: []string{"from-0"},
 		},
 		{
 			header: mail.Header(map[string][]string{
-				"From": []string{"from-0", "from-1"},
+				"From": {"from-0", "from-1"},
 			}),
 			keys: []string{"from", "from"},
 			want: []string{"from-1", "from-0"},
 		},
 		{
 			header: mail.Header(map[string][]string{
-				"From": []string{"from-0"},
+				"From": {"from-0"},
 			}),
 			keys: []string{"from", "from"},
 			want: []string{"from-0", ""},
 		},
 		{
 			header: mail.Header(map[string][]string{
-				"From": []string{},
+				"From": {},
 			}),
 			keys: []string{"from", "from"},
 			want: []string{"", ""},
@@ -410,4 +413,55 @@ func TestGetHeaderFunc(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestVerify_Concurrent(t *testing.T) {
+	m := &sync.Mutex{}
+	c := sync.NewCond(m)
+	ready := false
+
+	wg := sync.WaitGroup{}
+	for _, f := range []string{
+		"_samples/s001.eml",
+		"_samples/s002.eml",
+		"_samples/s003.eml",
+		"_samples/s004.eml",
+		"_samples/s005.eml",
+		"_samples/s006.eml",
+		"_samples/s007.eml",
+		"_samples/s007.eml",
+	} {
+		wg.Add(1)
+		go func(c *sync.Cond) {
+			defer func() {
+				if x := recover(); x != nil {
+					t.Errorf("concurrent usage panic %s", x)
+				}
+			}()
+			defer wg.Done()
+			r, err := os.Open(f)
+			if err != nil {
+				t.Errorf("error opening file %s", err)
+			}
+
+			c.L.Lock()
+			for !ready {
+				c.Wait()
+			}
+			c.L.Unlock()
+
+			msg, err := mail.ReadMessage(r)
+			if err != nil {
+				t.Errorf("error reading message %s", err)
+			}
+
+			_ = Verify("DKIM-Signature", msg,
+				InvalidSigningEntityOption("com", "co.uk", "org", "net", "io", "uk"),
+				SignatureTimingOption(),
+			)
+		}(c)
+	}
+	ready = true
+	c.Broadcast()
+	wg.Wait()
 }

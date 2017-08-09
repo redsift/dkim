@@ -103,7 +103,6 @@ var (
 	ErrUnsupportedAlgorithm        = errors.New("unsupported algorithm")
 	ErrMalformedTagValue           = errors.New("malformed tag value")
 	ErrUnsupportedQueryType        = errors.New("bad query type")
-	ErrUnknownTag                  = errors.New("bad tag")
 	ErrUnsupportedCanonicalization = errors.New("bad canonicalization")
 	ErrInputError                  = errors.New("input error")
 	ErrDomainMismatch              = errors.New("domain mismatch")
@@ -121,7 +120,8 @@ var (
 type Signature struct {
 	header         string
 	emptyHashValue string
-	algorithm      *algorithm
+	algorithm      hash.Hash
+	algorithmID    crypto.Hash
 	hash           []byte
 	bodyHash       []byte
 	relaxedHeader  bool
@@ -180,14 +180,14 @@ var (
 	reSignedHeaders = regexp.MustCompile(`:?\s*([^[:cntrl:]: ]+)\s*`)
 	timeZero        = time.Unix(0, 0)
 	algorithms      = map[string]*algorithm{
-		"rsa-sha1":   {crypto.SHA1, crypto.SHA1.New()},
-		"rsa-sha256": {crypto.SHA256, crypto.SHA256.New()},
+		"rsa-sha1":   {crypto.SHA1, crypto.SHA1.New},
+		"rsa-sha256": {crypto.SHA256, crypto.SHA256.New},
 	}
 )
 
 type algorithm struct {
-	id crypto.Hash
-	f  hash.Hash
+	id   crypto.Hash
+	hash func() hash.Hash
 }
 
 func checkRelaxed(s string) (bool, error) {
@@ -246,7 +246,8 @@ func parseSignature(k, v string) (*Signature, error) {
 			if !found {
 				return nil, ErrUnsupportedAlgorithm
 			}
-			s.algorithm = a
+			s.algorithm = a.hash()
+			s.algorithmID = a.id
 			required &^= fAlgorithm
 		case "b":
 			if s.hash, err = decodeBase64(value); err != nil {
@@ -601,7 +602,7 @@ func (s *Signature) verifyBodyHash(r io.Reader) *Result {
 		r = io.LimitReader(r, s.length)
 	}
 
-	bh, err := bodyHash(r, s.algorithm.f, s.relaxedBody)
+	bh, err := bodyHash(r, s.algorithm, s.relaxedBody)
 	if err != nil {
 		return NewResult(Temperror, ErrInputError, s)
 	}
@@ -693,14 +694,14 @@ func (s *Signature) verify(m *mail.Message, options ...VerifyOption) (result *Re
 	// https://tools.ietf.org/html/rfc6376#section-5.4.2
 	getHeader := getHeaderFunc(m.Header)
 
-	s.algorithm.f.Reset()
-	w := s.algorithm.f
+	s.algorithm.Reset()
+	w := s.algorithm
 	for _, k := range s.headers {
 		_, _ = w.Write(canonicalizedHeader(k, getHeader(k), s.relaxedHeader))
 		_, _ = w.Write(crlf)
 	}
 	_, _ = w.Write(canonicalizedHeader(s.header, s.emptyHashValue, s.relaxedHeader))
-	if e := rsa.VerifyPKCS1v15(pkey.key, s.algorithm.id, s.algorithm.f.Sum(nil), s.hash); e != nil {
+	if e := rsa.VerifyPKCS1v15(pkey.key, s.algorithmID, s.algorithm.Sum(nil), s.hash); e != nil {
 		return NewResult(Fail, ErrBadSignature, s)
 	}
 
