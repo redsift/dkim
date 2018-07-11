@@ -21,17 +21,27 @@ import (
 
 // Result holds all details about result of DKIM signature verification
 type Result struct {
-	Result    ResultCode
-	Reason    error
-	Signature *Signature
+	Result    ResultCode `json:"code"`
+	Error     error      `json:"error,omitempty"`
+	Signature *Signature `json:"signature,omitempty"`
+	Key       *PublicKey `json:"key,omitempty"`
 }
 
 // NewResult returns new *Result with provided details
-func NewResult(r ResultCode, e error, s *Signature) *Result {
+func newResult(r ResultCode, e error, s *Signature) *Result {
 	return &Result{
 		Result:    r,
-		Reason:    e,
+		Error:     e,
 		Signature: s,
+	}
+}
+
+func newResultWithKey(r ResultCode, e error, s *Signature, k *PublicKey) *Result {
+	return &Result{
+		Result:    r,
+		Error:     e,
+		Signature: s,
+		Key:       k,
 	}
 }
 
@@ -86,13 +96,50 @@ func (r ResultCode) String() string {
 	case Temperror:
 		return "temperror"
 	// The message could not be verified due to some error that
-	// is unrecoverable, such as a required header field being absent.  A
+	// is unrecoverable, such as a required Header field being absent.  A
 	// later attempt is unlikely to produce a final result.
 	case Permerror:
 		return "permerror"
 	default:
 		return strconv.Itoa(int(r))
 	}
+}
+
+type TagError struct {
+	Tag string `json:"tag"`
+	Val string `json:"val"`
+	Err error  `json:"err"`
+}
+
+func newTagError(t, v string, err error) *TagError {
+	return &TagError{t, v, err}
+}
+
+func (e *TagError) Error() string {
+	var w bytes.Buffer
+	w.WriteString(e.Err.Error())
+	w.WriteString(`; `)
+	w.WriteString(e.Tag)
+	w.WriteByte('=')
+	w.WriteString(e.Val)
+	return w.String()
+}
+
+type SignatureError struct {
+	Err error  `json:"err"`
+	Exp string `json:"exp"`
+}
+
+func newSignatureError(err error, exp string) *SignatureError {
+	return &SignatureError{err, exp}
+}
+
+func (e *SignatureError) Error() string {
+	var w bytes.Buffer
+	w.WriteString(e.Err.Error())
+	w.WriteString(`; `)
+	w.WriteString(e.Exp)
+	return w.String()
 }
 
 // Possible reasons of failed verification
@@ -112,39 +159,50 @@ var (
 	ErrUnacceptableKey             = errors.New("unacceptable key")
 	ErrTestingMode                 = errors.New("domain is testing DKIM")
 	ErrKeyRevoked                  = errors.New("key revoked")
-	ErrFromNotSigned               = errors.New("From field not signed")
+	ErrFromNotSigned               = errors.New("'From' field not signed")
 	ErrNoSignedFields              = errors.New("no signed fields")
+	ErrNoDomainSpecified           = errors.New("no domain specified")
+	ErrEmptyUserIdentity           = errors.New("empty user identity")
+	ErrNotDecimalNumber            = errors.New("not a decimal number")
+	ErrEmptySelector               = errors.New("empty Selector")
+	ErrUnsupportedServices         = errors.New("no supported services listed")
+	ErrEmptyKey                    = errors.New("empty key")
 )
 
 // Signature holds parsed DKIM signature
 type Signature struct {
-	header         string
+	Header         string `json:"header"` // Header of the signature
+	Raw            string `json:"raw"`    // Raw value of the signature
 	emptyHashValue string
 	algorithm      hash.Hash
-	algorithmID    crypto.Hash
-	hash           []byte
-	bodyHash       []byte
-	relaxedHeader  bool
-	relaxedBody    bool
-	signerDomain   string
-	headers        []string
-	userIdentifier string
-	length         int64
-	selector       string
-	timestamp      time.Time
-	expiration     time.Time
-	copiedHeaders  map[string]string
+	AlgorithmID    crypto.Hash       `json:"algorithmId"`             // 3 (SHA1) or 5 (SHA256)
+	Hash           []byte            `json:"hash"`                    // 'h' tag value
+	BodyHash       []byte            `json:"bodyHash"`                // 'bh' tag value
+	RelaxedHeader  bool              `json:"relaxedHeader"`           // header canonicalization algorithm
+	RelaxedBody    bool              `json:"relaxedBody"`             // body canonicalization algorithm
+	SignerDomain   string            `json:"signerDomain"`            // 'd' tag value
+	Headers        []string          `json:"headers"`                 // parsed 'h' tag value
+	UserIdentifier string            `json:"userId"`                  // 'i' tag value
+	Length         int64             `json:"length"`                  // 'l' tag value
+	Selector       string            `json:"selector"`                // 's' tag value
+	Timestamp      time.Time         `json:"ts"`                      // 't' tag value as time.Time
+	Expiration     time.Time         `json:"exp"`                     // 'x' tag value as time.Time
+	CopiedHeaders  map[string]string `json:"copiedHeaders,omitempty"` // parsed 'z' tag value
 	query          PublicKeyQuery
 }
 
 // PublicKey holds parsed public key
 type PublicKey struct {
-	algorithms []string       // [] means "allowing all"
-	key        *rsa.PublicKey // supporting "rsa" only
-	services   []string       // [] is "*"
+	Version    string   `json:"version, omitempty"`   // 'v' tag value
+	Raw        []byte   `json:"raw, omitempty"`       // 'p' tag value
+	Algorithms []string `json:"algorithms,omitempty"` // parsed 'h' tag value; [] means "allowing all"
+	Services   []string `json:"services,omitempty"`   // parsed 's' tag value; [] is "*"
+	Flags      []string `json:"flags,omitempty"`      // parsed 't' tag value
+	Notes      string   `json:"notes,omitempty"`      // 'n' tag value
+	Testing    bool     `json:"testing"`              // 't' contains 'y'
+	Strict     bool     `json:"strict"`               // 't' contains 's'
 	revoked    bool
-	testing    bool
-	strict     bool
+	key        *rsa.PublicKey // supporting "rsa" only
 }
 
 const qDNSTxt = "dns/txt"
@@ -152,7 +210,7 @@ const qDNSTxt = "dns/txt"
 var (
 	// Queries holds implementations of public key queries
 	Queries = map[string]PublicKeyQuery{
-		qDNSTxt: DNSTxtPublicKeyQuery,
+		qDNSTxt: _DNSTxtPublicKeyQuery,
 	}
 )
 
@@ -170,7 +228,7 @@ var (
 	// c= Message canonicalization
 	// https://tools.ietf.org/html/rfc6376#page-20
 	reCanonicalization = regexp.MustCompile(`^([[:alnum:]](?:[[:alnum:]-]*[[:alnum:]]))(?:/([[:alnum:]](?:[[:alnum:]-]*[[:alnum:]])))?$`)
-	// z= Copied header fields
+	// z= Copied Header fields
 	// https://tools.ietf.org/html/rfc6376#page-25
 	reCopiedHeaders = regexp.MustCompile(`\|?\s*([^[:cntrl:]: ]+):([^\s\|]+)\s*`)
 	// a slightly relaxed version of key-h-tag or key-s-tag
@@ -211,6 +269,7 @@ func parseSignature(k, v string) (*Signature, error) {
 	if v == "" {
 		return nil, ErrSignatureNotFound
 	}
+
 	const (
 		fVersion uint64 = 1 << iota
 		fAlgorithm
@@ -220,11 +279,31 @@ func parseSignature(k, v string) (*Signature, error) {
 		fHeaders
 		fSelector
 	)
+
 	required := fVersion + fAlgorithm + fHash + fBodyHash + fSignerDomain + fHeaders + fSelector
+	missedTags := func() string {
+		symbols := []string{"v", "a", "b", "bh", "d", "h", "s"}
+		var w bytes.Buffer
+		w.WriteString("no required tags found (")
+		for f, i, d := fVersion, 0, false; f <= fSelector; f, i = f<<1, i+1 {
+			if (required & f) == 0 {
+				continue
+			}
+			if d {
+				w.WriteString(", ")
+			}
+			w.WriteString(symbols[i])
+			d = true
+		}
+		w.WriteByte(')')
+		return w.String()
+	}
+
 	s := &Signature{
 		query:  Queries[qDNSTxt],
-		header: k,
-		// The DKIM-Signature header field that exists (verifying) or will
+		Header: k,
+		Raw:    v,
+		// The DKIM-Signature Header field that exists (verifying) or will
 		// be inserted (signing) in the message, with the value of the "b="
 		// tag (including all surrounding whitespace) deleted
 		// (i.e., treated as the empty string)
@@ -238,71 +317,70 @@ func parseSignature(k, v string) (*Signature, error) {
 		switch key {
 		case "v":
 			if value != "1" {
-				return nil, ErrUnsupportedVersion
+				return nil, newTagError("v", value, ErrUnsupportedVersion)
 			}
 			required &^= fVersion
 		case "a":
 			a, found := algorithms[value]
 			if !found {
-				return nil, ErrUnsupportedAlgorithm
+				return nil, newTagError("a", value, ErrUnsupportedAlgorithm)
 			}
 			s.algorithm = a.hash()
-			s.algorithmID = a.id
+			s.AlgorithmID = a.id
 			required &^= fAlgorithm
 		case "b":
-			if s.hash, err = decodeBase64(value); err != nil {
-				return nil, ErrMalformedTagValue
+			if s.Hash, err = decodeBase64(value); err != nil {
+				return nil, newTagError("b", value, ErrMalformedTagValue)
 			}
 			required &^= fHash
 		case "bh":
-			if s.bodyHash, err = decodeBase64(value); err != nil {
-				return nil, ErrMalformedTagValue
+			if s.BodyHash, err = decodeBase64(value); err != nil {
+				return nil, newTagError("bh", value, ErrMalformedTagValue)
 			}
 			required &^= fBodyHash
 		case "c":
 			m := reCanonicalization.FindAllStringSubmatch(value, 1)
-			// m := [["headerAlgorigthm/bodyAlgorithm" "headerAlgorigthm"
-			// "bodyAlgorithm"]]
+			// m := [["headerAlgorigthm/bodyAlgorithm" "headerAlgorigthm" "bodyAlgorithm"]]
 			if m == nil {
-				return nil, ErrUnsupportedCanonicalization
+				return nil, newTagError("c", value, ErrUnsupportedCanonicalization)
 			}
-			if s.relaxedHeader, err = checkRelaxed(m[0][1]); err != nil {
-				return nil, err
+			if s.RelaxedHeader, err = checkRelaxed(m[0][1]); err != nil {
+				return nil, newTagError("c", value, err)
 			}
-			if s.relaxedBody, err = checkRelaxed(m[0][2]); err != nil {
-				return nil, err
+			if s.RelaxedBody, err = checkRelaxed(m[0][2]); err != nil {
+				return nil, newTagError("c", value, err)
 			}
 		case "d":
 			// The SDID MUST correspond to a valid DNS name under
 			// which the DKIM key record is published.
 			if value == "" {
-				return nil, ErrMalformedTagValue
+				return nil, newTagError("d", "", ErrNoDomainSpecified)
 			}
-			s.signerDomain = value
+			s.SignerDomain = value
 			required &^= fSignerDomain
 		case "h":
-			// The field MAY contain multiple instances of a header field
+			// The field MAY contain multiple instances of a Header field
 			// name, meaning multiple occurrences of the corresponding
-			// header field are included in the header hash.
+			// Header field are included in the Header Hash.
 			// ...
 			// This list MUST NOT be empty.
 			// https://tools.ietf.org/html/rfc6376#page-21
 			if value == "" {
-				return nil, ErrNoSignedFields
+				return nil, newTagError("h", "", ErrNoSignedFields)
 			}
 			acceptable := false
-			s.headers = mapMatches(reSignedHeaders, value, func(m []string) string {
+			s.Headers = mapMatches(reSignedHeaders, value, func(m []string) string {
 				// m := [":v" "v"]
 				if "from" == strings.ToLower(m[1]) {
 					acceptable = true
 				}
 				return m[1]
 			})
-			// If the "h=" tag does not include the From header field, the Verifier
-			// MUST ignore the DKIM-Signature header field and return PERMFAIL
+			// If the "h=" tag does not include the From Header field, the Verifier
+			// MUST ignore the DKIM-Signature Header field and return PERMFAIL
 			// (From field not signed).
 			if !acceptable {
-				return nil, ErrFromNotSigned
+				return nil, newTagError("h", value, ErrFromNotSigned)
 			}
 			required &^= fHeaders
 		case "i":
@@ -311,33 +389,33 @@ func parseSignature(k, v string) (*Signature, error) {
 			// sig-i-tag       = %x69 [FWS] "=" [FWS] [ Local-part ]
 			//                            "@" domain-name
 			if value == "" {
-				return nil, ErrMalformedTagValue
+				return nil, newTagError("i", "", ErrEmptyUserIdentity)
 			}
-			s.userIdentifier = value
+			s.UserIdentifier = value
 		case "l":
-			if s.length, err = strconv.ParseInt(value, 10, 64); err != nil {
-				return nil, ErrMalformedTagValue
+			if s.Length, err = strconv.ParseInt(value, 10, 64); err != nil {
+				return nil, newTagError("l", value, ErrNotDecimalNumber)
 			}
 		case "q":
 			q, found := Queries[value]
 			if !found {
-				return nil, ErrUnsupportedQueryType
+				return nil, newTagError("q", value, ErrUnsupportedQueryType)
 			}
 			s.query = q
 		case "s":
 			if value == "" {
-				return nil, ErrMalformedTagValue
+				return nil, newTagError("s", "", ErrEmptySelector)
 			}
-			s.selector = value
+			s.Selector = value
 			required &^= fSelector
 		case "t":
-			// Implementations MAY ignore signatures that have a timestamp in the future.
+			// Implementations MAY ignore signatures that have a Timestamp in the future.
 			// https://tools.ietf.org/html/rfc6376#page-24
 			var t int64
 			if t, err = strconv.ParseInt(value, 10, 64); err != nil {
-				return nil, ErrMalformedTagValue
+				return nil, newTagError("t", value, ErrNotDecimalNumber)
 			}
-			s.timestamp = time.Unix(t, 0)
+			s.Timestamp = time.Unix(t, 0)
 		case "x":
 			// Due to clock drift, the receiver's notion of when to consider
 			// the signature expired may not exactly match what the sender
@@ -346,21 +424,21 @@ func parseSignature(k, v string) (*Signature, error) {
 			// https://tools.ietf.org/html/rfc6376#page-25
 			var t int64
 			if t, err = strconv.ParseInt(value, 10, 64); err != nil {
-				return nil, ErrMalformedTagValue
+				return nil, newTagError("x", value, ErrNotDecimalNumber)
 			}
-			s.expiration = time.Unix(t, 0)
+			s.Expiration = time.Unix(t, 0)
 		case "z":
 			// TODO support multiple entries per field
 			hdrs := reCopiedHeaders.FindAllStringSubmatch(value, -1)
-			s.copiedHeaders = make(map[string]string, len(hdrs))
+			s.CopiedHeaders = make(map[string]string, len(hdrs))
 			for _, m := range hdrs {
 				// m := ["t:v" "t" "v"]
-				s.copiedHeaders[m[1]] = m[2]
+				s.CopiedHeaders[m[1]] = m[2]
 			}
 		}
 	}
 	if required != 0 {
-		return nil, ErrBadSignature
+		return nil, newSignatureError(ErrBadSignature, missedTags())
 	}
 	return s, nil
 }
@@ -405,7 +483,7 @@ func bodyHash(in io.Reader, h hash.Hash, relaxed bool) ([]byte, error) {
 			_, _ = w.Write(crlf)
 		}
 
-		_, _ = w.Write(b)    // we do not expect any errors on hash side
+		_, _ = w.Write(b)    // we do not expect any errors on Hash side
 		_, _ = w.Write(crlf) // ReadLineBytes eliding the final \n or \r\n from the returned string
 	}
 	// Note that a completely empty or missing body is canonicalized as a single "CRLF"
@@ -416,36 +494,36 @@ func bodyHash(in io.Reader, h hash.Hash, relaxed bool) ([]byte, error) {
 }
 
 // VerifyOption provides way to extend signature verification.
-// Verifiers MAY ignore the DKIM-Signature header field and return PERMFAIL
-// (unacceptable signature header) for any other reason, for example, if
-// the signature does not sign header fields that the Verifier views to be
-// essential.  As a case in point, if MIME header fields are not signed,
+// Verifiers MAY ignore the DKIM-Signature Header field and return PERMFAIL
+// (unacceptable signature Header) for any other reason, for example, if
+// the signature does not sign Header fields that the Verifier views to be
+// essential.  As a case in point, if MIME Header fields are not signed,
 // certain attacks may be possible that the Verifier would prefer to avoid.
 type VerifyOption func(s *Signature, k *PublicKey, m *mail.Message) *Result
 
 // SignatureTimingOption checks if signature is expired
-// Verifiers MAY ignore the DKIM-Signature header field and return
+// Verifiers MAY ignore the DKIM-Signature Header field and return
 // PERMFAIL (signature expired) if it contains an "x=" tag and
 // the signature has expired.
 func SignatureTimingOption() VerifyOption {
 	return func(s *Signature, _ *PublicKey, _ *mail.Message) *Result {
 		now := time.Now()
-		if s.timestamp.After(now) {
-			return NewResult(Permerror, ErrBadSignature, s)
+		if s.Timestamp.After(now) {
+			return newResult(Permerror, ErrBadSignature, s)
 		}
-		expPresent := s.expiration.After(timeZero)
-		if expPresent && s.expiration.Before(now) {
-			return NewResult(Permerror, ErrSignatureExpired, s)
+		expPresent := s.Expiration.After(timeZero)
+		if expPresent && s.Expiration.Before(now) {
+			return newResult(Permerror, ErrSignatureExpired, s)
 		}
-		if expPresent && s.timestamp.After(timeZero) && s.expiration.Before(s.timestamp) {
-			return NewResult(Permerror, ErrBadSignature, s)
+		if expPresent && s.Timestamp.After(timeZero) && s.Expiration.Before(s.Timestamp) {
+			return newResult(Permerror, ErrBadSignature, s)
 		}
 		return nil
 	}
 }
 
 // InvalidSigningEntityOption checks if domain of "i=" equals to "d=".
-// Verifiers MAY ignore the DKIM-Signature header field if the domain
+// Verifiers MAY ignore the DKIM-Signature Header field if the domain
 // used by the Signer in the "d=" tag is not associated with a valid
 // signing entity.  For example, signatures with "d=" values such as
 // "com" and "co.uk" could be ignored.
@@ -456,26 +534,26 @@ func InvalidSigningEntityOption(domains ...string) VerifyOption {
 		index[d] = struct{}{}
 	}
 	return func(s *Signature, _ *PublicKey, _ *mail.Message) *Result {
-		if _, found := index[s.signerDomain]; found {
-			return NewResult(Permerror, ErrInvalidSigningEntity, s)
+		if _, found := index[s.SignerDomain]; found {
+			return newResult(Permerror, ErrInvalidSigningEntity, s)
 		}
 		return nil
 	}
 }
 
 // PublicKeyQuery defines API for implementation of "q=".
-type PublicKeyQuery func(selector, domain string) (*PublicKey, *Result)
+type PublicKeyQuery func(*Signature) (*PublicKey, *Result)
 
 // DNSTxtPublicKeyQuery provides implementation of "dns/txt" query.
-func DNSTxtPublicKeyQuery(selector, domain string) (*PublicKey, *Result) {
-	records, err := net.LookupTXT(selector + "._domainkey." + domain)
+func _DNSTxtPublicKeyQuery(s *Signature) (*PublicKey, *Result) {
+	records, err := net.LookupTXT(s.Selector + "._domainkey." + s.SignerDomain)
 	if err != nil {
-		return nil, NewResult(Temperror, ErrKeyUnavailable, nil)
+		return nil, newResult(Temperror, ErrKeyUnavailable, s)
 	}
 
 	key, err := parsePublicKey(strings.Join(records, ""))
 	if err != nil {
-		return nil, NewResult(Permerror, err, nil)
+		return nil, newResult(Permerror, err, s)
 	}
 
 	return key, nil
@@ -500,13 +578,34 @@ func mapMatches(re *regexp.Regexp, s string, f func(g []string) string) []string
 // parsePublicKey parses textual representation of the key
 // See https://tools.ietf.org/html/rfc6376#section-3.6.1 for details
 func parsePublicKey(s string) (*PublicKey, error) {
+	unacceptableKey := func(t, v string, e error) (*PublicKey, error) {
+		return nil, newSignatureError(ErrUnacceptableKey, newTagError(t, v, e).Error())
+	}
+
 	if s == "" {
-		return nil, ErrUnacceptableKey
+		return nil, newSignatureError(ErrUnacceptableKey, ErrEmptyKey.Error())
 	}
 	const (
 		fData uint64 = 1 << iota
 	)
 	required := fData
+	missedTags := func() string {
+		symbols := []string{"v", "a", "b", "bh", "d", "h", "s"}
+		var w bytes.Buffer
+		w.WriteString("no required tags found (")
+		for f, i, d := fData, 0, false; f <= fData; f, i = f<<1, i+1 {
+			if (required & f) == 0 {
+				continue
+			}
+			if d {
+				w.WriteString(", ")
+			}
+			w.WriteString(symbols[i])
+			d = true
+		}
+		w.WriteByte(')')
+		return w.String()
+	}
 	k := &PublicKey{revoked: true}
 	for _, m := range reTagValueList.FindAllStringSubmatch(s, -1) {
 		// m := ["t=v" "t" "v"]
@@ -514,11 +613,12 @@ func parsePublicKey(s string) (*PublicKey, error) {
 		switch key {
 		case "v": // Version of the DKIM key record
 			if value != "DKIM1" {
-				return nil, ErrUnacceptableKey
+				return unacceptableKey("v", value, ErrUnsupportedVersion)
 			}
-		case "h": // Acceptable hash algorithms
+			k.Version = value
+		case "h": // Acceptable Hash algorithms
 			acceptable := false
-			k.algorithms = mapMatches(reKeyXTag, value, func(m []string) string {
+			k.Algorithms = mapMatches(reKeyXTag, value, func(m []string) string {
 				// m := [":a" "a"]
 				s = "rsa-" + m[1]
 				if _, found := algorithms[s]; found {
@@ -527,16 +627,16 @@ func parsePublicKey(s string) (*PublicKey, error) {
 				return s
 			})
 			if !acceptable {
-				return nil, ErrUnacceptableKey
+				return unacceptableKey("h", value, ErrUnsupportedAlgorithm)
 			}
 		case "k": // Key type
 			if value != "rsa" {
 				// Unrecognized key types MUST be ignored.
 				// https://tools.ietf.org/html/rfc6376#page-27
-				return nil, ErrUnacceptableKey
+				return unacceptableKey("k", value, ErrUnsupportedAlgorithm)
 			}
-		// case "n": // Notes that might be of interest to a human
-		//	k.notes = value
+		case "n": // Notes that might be of interest to a human
+			k.Notes = value
 		case "p": // Public-key data (base64; REQUIRED)
 			// An empty value means that this public key has been revoked.
 			// The syntax and semantics of this tag value before being
@@ -544,23 +644,24 @@ func parsePublicKey(s string) (*PublicKey, error) {
 			if value != "" {
 				b, err := base64.StdEncoding.DecodeString(value)
 				if err != nil {
-					return nil, ErrUnacceptableKey
+					return unacceptableKey("p", value, err)
 				}
 				i, err := x509.ParsePKIXPublicKey(b)
 				if err != nil {
-					return nil, ErrUnacceptableKey
+					return unacceptableKey("p", value, err)
 				}
 				pkey, ok := i.(*rsa.PublicKey)
 				if !ok {
-					return nil, ErrUnacceptableKey
+					return unacceptableKey("p", value, ErrUnacceptableKey)
 				}
+				k.Raw = b
 				k.key = pkey
 				k.revoked = false
 			}
 			required &^= fData
 		case "s": // Service Type
 			acceptable := false
-			k.services = mapMatches(reKeySTag, value, func(m []string) string {
+			k.Services = mapMatches(reKeySTag, value, func(m []string) string {
 				// m := [":v" "v"]
 				switch m[1] {
 				case "email":
@@ -571,51 +672,51 @@ func parsePublicKey(s string) (*PublicKey, error) {
 				return m[1]
 			})
 			if !acceptable {
-				return nil, ErrUnacceptableKey
+				return unacceptableKey("s", value, ErrUnsupportedServices)
 			}
 		case "t": // Flags
-			_ = mapMatches(reKeyXTag, value, func(m []string) string {
+			k.Flags = mapMatches(reKeyXTag, value, func(m []string) string {
 				// m := [":v" "v"]
 				switch m[1] {
 				case "y":
-					k.testing = true
+					k.Testing = true
 				case "s":
-					k.strict = true
+					k.Strict = true
 				}
-				return s
+				return m[1]
 			})
 		}
 	}
 	if required != 0 {
-		return nil, ErrUnacceptableKey
+		return nil, newSignatureError(ErrUnacceptableKey, missedTags())
 	}
 
 	return k, nil
 }
 
 func (s *Signature) verifyBodyHash(r io.Reader) *Result {
-	// In hash step 1, the Signer/Verifier MUST hash the message body,
+	// In Hash step 1, the Signer/Verifier MUST Hash the message body,
 	// canonicalized using the body canonicalization algorithm specified
-	// in the "c=" tag and then truncated to the length specified in the "l=" tag.
-	// TODO cache BH for the message::length
-	if s.length > 0 {
-		r = io.LimitReader(r, s.length)
+	// in the "c=" tag and then truncated to the Length specified in the "l=" tag.
+	// TODO cache BH for the message::Length
+	if s.Length > 0 {
+		r = io.LimitReader(r, s.Length)
 	}
 
-	bh, err := bodyHash(r, s.algorithm, s.relaxedBody)
+	bh, err := bodyHash(r, s.algorithm, s.RelaxedBody)
 	if err != nil {
-		return NewResult(Temperror, ErrInputError, s)
+		return newResult(Temperror, ErrInputError, s)
 	}
 
-	if !bytes.Equal(bh, s.bodyHash) {
-		return NewResult(Fail, ErrBadSignature, s)
+	if !bytes.Equal(bh, s.BodyHash) {
+		return newResult(Fail, ErrBadSignature, s)
 	}
 
 	return nil
 }
 
 func compareDomains(u, d string, strict bool) bool {
-	// If the DKIM-Signature header field does not contain the "i="
+	// If the DKIM-Signature Header field does not contain the "i="
 	// tag, the Verifier MUST behave as though the value of that
 	// tag were "@d", where "d" is the value from the "d=" tag.
 	// https://tools.ietf.org/html/rfc6376#section-6.1.1
@@ -624,7 +725,7 @@ func compareDomains(u, d string, strict bool) bool {
 	}
 
 	if strict {
-		// Any DKIM-Signature header fields using the "i=" tag MUST have
+		// Any DKIM-Signature Header fields using the "i=" tag MUST have
 		// the same domain value on the right-hand side of the "@" in the
 		// "i=" tag and the value of the "d=" tag.
 		i := bytes.LastIndexByte([]byte(u), '@')
@@ -633,7 +734,7 @@ func compareDomains(u, d string, strict bool) bool {
 
 	// Verifiers MUST confirm that the domain specified in the "d=" tag is
 	// the same as or a parent domain of the domain part of the "i=" tag.
-	// If not, the DKIM-Signature header field MUST be ignored, and the
+	// If not, the DKIM-Signature Header field MUST be ignored, and the
 	// Verifier should return PERMFAIL (domain mismatch).
 	// https: //tools.ietf.org/html/rfc6376#section-6.1.1
 	return strings.HasSuffix(u, d)
@@ -642,51 +743,53 @@ func compareDomains(u, d string, strict bool) bool {
 func (s *Signature) verify(m *mail.Message, options ...VerifyOption) (result *Result) {
 	// TODO cache result
 	if s == nil {
-		return NewResult(None, ErrSignatureNotFound, s)
+		return newResult(None, ErrSignatureNotFound, s)
 	}
 
 	var pkey *PublicKey
-	if pkey, result = s.query(s.selector, s.signerDomain); result != nil {
+	if pkey, result = s.query(s); result != nil {
 		return result
 	}
 
 	if pkey.revoked {
-		return NewResult(Fail, ErrKeyRevoked, s)
+		return newResult(Fail, ErrKeyRevoked, s)
 	}
 
 	// Verifiers MUST NOT treat messages from Signers in testing mode
 	// differently from unsigned email
-	if pkey.testing {
-		return NewResult(None, ErrTestingMode, s)
+	if pkey.Testing {
+		return newResult(None, ErrTestingMode, s)
 	}
 
-	if ok := compareDomains(s.userIdentifier, s.signerDomain, pkey.strict); !ok {
-		return NewResult(Permerror, ErrDomainMismatch, s)
+	if ok := compareDomains(s.UserIdentifier, s.SignerDomain, pkey.Strict); !ok {
+		return newResult(Permerror, ErrDomainMismatch, s)
 	}
 
-	// Fail fast here, provided all VerifyOption is quite fast
+	// Fail fast here, provided options are fast
 	for _, option := range options {
 		if result = option(s, pkey, m); result != nil {
+			result.Key = pkey
 			return
 		}
 	}
 
 	if result = s.verifyBodyHash(m.Body); result != nil {
+		result.Key = pkey
 		return
 	}
 
-	// In hash step 2, the Signer/Verifier MUST pass the following to the
-	// hash algorithm in the indicated order.
+	// In Hash step 2, the Signer/Verifier MUST pass the following to the
+	// Hash algorithm in the indicated order.
 	//
-	// 1.  The header fields specified by the "h=" tag, in the order
-	//	   specified in that tag, and canonicalized using the header
+	// 1.  The Header fields specified by the "h=" tag, in the order
+	//	   specified in that tag, and canonicalized using the Header
 	//	   canonicalization algorithm specified in the "c=" tag.  Each
-	//	   header field MUST be terminated with a single CRLF.
+	//	   Header field MUST be terminated with a single CRLF.
 	//
-	// 2.  The DKIM-Signature header field that exists (verifying) or will
+	// 2.  The DKIM-Signature Header field that exists (verifying) or will
 	//	   be inserted (signing) in the message, with the value of the "b="
 	//	   tag (including all surrounding whitespace) deleted (i.e., treated
-	//	   as the empty string), canonicalized using the header
+	//	   as the empty string), canonicalized using the Header
 	//	   canonicalization algorithm specified in the "c=" tag, and without
 	//	   a trailing CRLF.
 
@@ -696,16 +799,16 @@ func (s *Signature) verify(m *mail.Message, options ...VerifyOption) (result *Re
 
 	s.algorithm.Reset()
 	w := s.algorithm
-	for _, k := range s.headers {
-		_, _ = w.Write(canonicalizedHeader(k, getHeader(k), s.relaxedHeader))
+	for _, k := range s.Headers {
+		_, _ = w.Write(canonicalizedHeader(k, getHeader(k), s.RelaxedHeader))
 		_, _ = w.Write(crlf)
 	}
-	_, _ = w.Write(canonicalizedHeader(s.header, s.emptyHashValue, s.relaxedHeader))
-	if e := rsa.VerifyPKCS1v15(pkey.key, s.algorithmID, s.algorithm.Sum(nil), s.hash); e != nil {
-		return NewResult(Fail, ErrBadSignature, s)
+	_, _ = w.Write(canonicalizedHeader(s.Header, s.emptyHashValue, s.RelaxedHeader))
+	if e := rsa.VerifyPKCS1v15(pkey.key, s.AlgorithmID, s.algorithm.Sum(nil), s.Hash); e != nil {
+		return newResultWithKey(Fail, ErrBadSignature, s, pkey)
 	}
 
-	return NewResult(Pass, nil, s)
+	return newResultWithKey(Pass, nil, s, pkey)
 }
 
 func getHeaderFunc(h mail.Header) func(k string) string {
@@ -743,26 +846,26 @@ func canonicalizedHeader(k, v string, relaxed bool) []byte {
 		// NOTE: textproto.Reader#ReadMIMEHeader returns map of
 		// CanonicalMIMEHeaderKey(key) and make impossible
 		// "simple" canonicalization
-		// TODO raw headers required
+		// TODO raw Headers required
 		return []byte(k + `:` + v)
 	}
 	// 3.4.2.  The "relaxed" Header Canonicalization Algorithm
 	// https://tools.ietf.org/html/rfc6376#section-3.4.2
 	//
-	// o  Convert all header field names (not the header field values) to
+	// o  Convert all Header field names (not the Header field values) to
 	//    lowercase.  For example, convert "SUBJect: AbC" to "subject: AbC".
 	//
-	// o  Unfold all header field continuation lines as described in
+	// o  Unfold all Header field continuation lines as described in
 	//    [RFC5322]; in particular, lines with terminators embedded in
-	//    continued header field values (that is, CRLF sequences followed by
+	//    continued Header field values (that is, CRLF sequences followed by
 	//    WSP) MUST be interpreted without the CRLF.  Implementations MUST
-	//    NOT remove the CRLF at the end of the header field value.
+	//    NOT remove the CRLF at the end of the Header field value.
 	//
 	// o  Convert all sequences of one or more WSP characters to a single SP
 	//    character.  WSP characters here include those before and after a
 	//    line folding boundary.
 	//
-	// o  Delete all WSP characters at the end of each unfolded header field
+	// o  Delete all WSP characters at the end of each unfolded Header field
 	//    value.
 	b := bytes.TrimRight(reUnfoldAndReduceWS.ReplaceAll([]byte(v), sp), wsp)
 	h := make([]byte, 0, len(k)+len(b)+1)
@@ -781,14 +884,14 @@ func Verify(hdr string, msg *mail.Message, opts ...VerifyOption) *Result {
 	}
 	sigs := msg.Header[textproto.CanonicalMIMEHeaderKey(hdr)]
 	if len(sigs) == 0 {
-		return NewResult(None, nil, nil)
+		return newResult(None, nil, nil)
 	}
 	var (
 		s   *Signature
 		err error
 	)
 	if s, err = parseSignature(hdr, sigs[len(sigs)-1]); err != nil {
-		return NewResult(Permerror, err, nil)
+		return newResult(Permerror, err, s)
 	}
 	return s.verify(msg, opts...)
 }
@@ -800,18 +903,24 @@ func (r *Result) String() string {
 	if r == nil {
 		return ""
 	}
-	p := append(make([]string, 0, 4), r.Result.String())
-	if r.Reason != nil {
-		p = append(p, "problem="+r.Reason.Error())
+	var w bytes.Buffer
+
+	w.WriteString(r.Result.String())
+
+	if r.Error != nil {
+		w.WriteString("; problem=")
+		w.WriteString(r.Error.Error())
 	}
 	if r.Signature != nil {
-		if r.Signature.signerDomain != "" {
-			p = append(p, "header.d="+r.Signature.signerDomain)
+		if r.Signature.SignerDomain != "" {
+			w.WriteString("; Header.d=")
+			w.WriteString(r.Signature.SignerDomain)
 		}
-		if r.Signature.userIdentifier != "" {
-			p = append(p, "header.i="+r.Signature.userIdentifier)
+		if r.Signature.UserIdentifier != "" {
+			w.WriteString("; Header.i=")
+			w.WriteString(r.Signature.UserIdentifier)
 		}
 	}
 
-	return strings.Join(p, "; ")
+	return w.String()
 }

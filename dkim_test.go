@@ -2,6 +2,8 @@ package dkim
 
 import (
 	"bufio"
+	"errors"
+	"fmt"
 	"net/mail"
 	"os"
 	"reflect"
@@ -21,11 +23,11 @@ var cache = map[string]*cacheEntry{
 	`20130820._domainkey.1e100.net`:          {s: `k=rsa; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAnOv6+Txyz+SEc7mT719QQtOj6g2MjpErYUGVrRGGc7f5rmE1cRP1lhwx8PVoHOiuRzyok7IqjvAub9kk9fBoE9uXJB1QaRdMnKz7W/UhWemK5TEUgW1xT5qtBfUIpFRL34h6FbHbeysb4szi7aTgerxI15o73cP5BoPVkQj4BQKkfTQYGNH03J5Db9uMqW/NNJ8fKCLKWO5C1e+NQ1lD6uwFCjJ6PWFmAIeUu9+LfYW89Tz1NnwtSkFC96Oky1cmnlBf4dhZ/Up/FMZmB9l7TA6gLEu6JijlDrNmx1o50WADPjjN4rGELLt3VuXn09y2piBPlZPU2SIiDQC0qX0JWQIDAQAB`},
 }
 
-func CachedPublicKeyQuery(s, d string) (*PublicKey, *Result) {
-	n := s + "._domainkey." + d
+func CachedPublicKeyQuery(s *Signature) (*PublicKey, *Result) {
+	n := s.Selector + "._domainkey." + s.SignerDomain
 	c, found := cache[n]
 	if !found {
-		return nil, NewResult(Temperror, ErrKeyUnavailable, nil)
+		return nil, newResult(Temperror, ErrKeyUnavailable, nil)
 	}
 	if c.k != nil || c.r != nil {
 		return c.k, c.r
@@ -33,7 +35,7 @@ func CachedPublicKeyQuery(s, d string) (*PublicKey, *Result) {
 	k, e := parsePublicKey(c.s)
 	entry := &cacheEntry{k: k}
 	if e != nil {
-		entry.r = NewResult(Temperror, e, nil)
+		entry.r = newResult(Temperror, e, nil)
 	}
 	cache[n] = entry
 	return entry.k, entry.r
@@ -41,89 +43,145 @@ func CachedPublicKeyQuery(s, d string) (*PublicKey, *Result) {
 
 func TestMain(m *testing.M) {
 	Queries[qDNSTxt] = CachedPublicKeyQuery
-	c := m.Run()
-	Queries[qDNSTxt] = DNSTxtPublicKeyQuery
-	os.Exit(c)
+	os.Exit(m.Run())
 }
 
 func TestDnsTxtPublicKeyQuery(t *testing.T) {
 	mustKey := func(s, d string) *PublicKey {
-		k, _ := CachedPublicKeyQuery(s, d)
+		k, _ := CachedPublicKeyQuery(&Signature{Selector: s, SignerDomain: d})
 		if k == nil {
 			t.FailNow()
 		}
 		return k
 	}
-	samples := []struct {
-		s string
-		d string
-		k *PublicKey
-		r *Result
-	}{
-		{"highgrade", "guerrillamail.com", mustKey("highgrade", "guerrillamail.com"), nil},
-		{"20130820", "1e100.net", mustKey("20130820", "1e100.net"), nil},
-		{"permerror", "example.com", nil, NewResult(Temperror, ErrKeyUnavailable, nil)},
+
+	sigs := map[string]*Signature{
+		"highgrade": &Signature{Selector: "highgrade", SignerDomain: "guerrillamail.com"},
+		"20130802":  &Signature{Selector: "20130820", SignerDomain: "1e100.net"},
+		"temperror": &Signature{Selector: "temperror", SignerDomain: "example.com"},
 	}
-	for i, want := range samples {
-		if k, r := DNSTxtPublicKeyQuery(want.s, want.d); !reflect.DeepEqual(k, want.k) || !reflect.DeepEqual(r, want.r) {
-			t.Errorf("sample#%d got {%v %v}, want {%v %v}", i, k, r, want.k, want.r)
+
+	tests := []struct {
+		name string
+		s    *Signature
+		k    *PublicKey
+		r    *Result
+	}{
+		{"highgrade", sigs["highgrade"], mustKey("highgrade", "guerrillamail.com"), nil},
+		{"20130802", sigs["20130802"], mustKey("20130820", "1e100.net"), nil},
+		{"temperror", sigs["temperror"], nil, newResult(Temperror, ErrKeyUnavailable, sigs["temperror"])},
+	}
+
+	const wantTest = -1
+	for testNo, test := range tests {
+		//noinspection GoBoolExpressions
+		if wantTest > -1 && wantTest != testNo {
+			continue
 		}
+		t.Run(fmt.Sprintf("%d_%s", testNo, test.name), func(t *testing.T) {
+			k, r := _DNSTxtPublicKeyQuery(test.s)
+			if !reflect.DeepEqual(k, test.k) {
+				t.Errorf("DNSTxtPublicKeyQuery()\n\t got k=%q\n\twant k=%q", k, test.k)
+			}
+			if !reflect.DeepEqual(r, test.r) {
+				t.Errorf("DNSTxtPublicKeyQuery()\n\t got r=%q\n\twant r=%q", r, test.r)
+			}
+		})
 	}
 }
 
 func TestParsePublicKey(t *testing.T) {
-	samples := map[string]struct {
-		k *PublicKey
-		e error
-	}{
-		"":        {nil, ErrUnacceptableKey},
-		"v=1":     {nil, ErrUnacceptableKey},
-		"v=DKIM1": {nil, ErrUnacceptableKey},
-		"h=md5":   {nil, ErrUnacceptableKey},
-		"k=des":   {nil, ErrUnacceptableKey},
-		"p=": {&PublicKey{
-			revoked: true,
-		}, nil},
-		"p==":    {nil, ErrUnacceptableKey},
-		"p=MAMA": {nil, ErrUnacceptableKey},
-		"p=; t=y:\n\ts": {&PublicKey{
-			revoked: true,
-			testing: true,
-			strict:  true,
-		}, nil},
-		"p=; s=*:email:x-teleport": {&PublicKey{
-			revoked:  true,
-			services: []string{"*", "email", "x-teleport"},
-		}, nil},
-		"p=; s=x-teleport": {nil, ErrUnacceptableKey},
+	unacceptableKey := func(t, v string, e error) error {
+		return newSignatureError(ErrUnacceptableKey, newTagError(t, v, e).Error())
 	}
-	for s, want := range samples {
-		if k, e := parsePublicKey(s); !reflect.DeepEqual(k, want.k) || e != want.e {
-			t.Errorf("for `%s` got {%v %v}, want %v", s, k, e, want)
+	tests := []struct {
+		name    string
+		raw     string
+		wantKey *PublicKey
+		wantErr error
+	}{
+		{"empty",
+			"", nil, newSignatureError(ErrUnacceptableKey, ErrEmptyKey.Error())},
+		{"wrong_version",
+			"v=1", nil, unacceptableKey("v", "1", ErrUnsupportedVersion)},
+		{"no data",
+			"v=DKIM1", nil, newSignatureError(ErrUnacceptableKey, "no required tags found (v)")},
+		{"wrong algorithm",
+			"h=md5", nil, unacceptableKey("h", "md5", ErrUnsupportedAlgorithm)},
+		{"wrong type",
+			"k=des", nil, unacceptableKey("k", "des", ErrUnsupportedAlgorithm)},
+		{"revoked",
+			"p=", &PublicKey{revoked: true}, nil},
+		{"wrong data",
+			"p==", nil, unacceptableKey("p", "=", errors.New("illegal base64 data at input byte 0"))},
+		{"not a key",
+			"p=MAMA", nil, unacceptableKey("p", "MAMA", errors.New("asn1: syntax error: data truncated"))},
+		{"revoked testing strict",
+			"p=; t=y:\n\ts", &PublicKey{Flags: []string{"y", "s"}, revoked: true, Testing: true, Strict: true}, nil},
+		{"x-teleport",
+			"p=; s=*:email:x-teleport", &PublicKey{revoked: true, Services: []string{"*", "email", "x-teleport"}}, nil},
+		{"no services listed",
+			"p=; s=x-teleport", nil, unacceptableKey("s", "x-teleport", ErrUnsupportedServices)},
+	}
+	const wantTest = -1
+	for testNo, test := range tests {
+		//noinspection GoBoolExpressions
+		if wantTest > -1 && wantTest != testNo {
+			continue
 		}
+		t.Run(fmt.Sprintf("%d_%s", testNo, test.name), func(t *testing.T) {
+			key, err := parsePublicKey(test.raw)
+			if !reflect.DeepEqual(err, test.wantErr) {
+				t.Errorf("parsePublicKey()\n\t    err=\"%v\"\n\twantErr=\"%v\"", err, test.wantErr)
+			}
+			if !reflect.DeepEqual(key, test.wantKey) {
+				t.Errorf("parsePublicKey()\n\t    key=\"%#v\"\n\twantKey=\"%#v\"", key, test.wantKey)
+			}
+		})
 	}
 }
 
 func compareSignatures(l, r *Signature) bool {
-	// Func values are deeply equal if both are nil; otherwise they are not
-	// deeply equal.
-	l.query = nil
-	r.query = nil
+	if l == r {
+		return true
+	}
+	if l == nil || r == nil {
+		return false
+	}
+	// Func values are deeply equal if both are nil; otherwise they are not deeply equal.
+	l.query, r.query = nil, nil
+
 	return reflect.DeepEqual(l, r)
 }
 
-func TestParseSignature(t *testing.T) {
-	goodGirls := map[string]*Signature{
-		`v=1; a=rsa-sha256; d=example.net; s=brisbane;
+func TestParseSignature_Valid(t *testing.T) {
+	tests := []struct {
+		name    string
+		raw     string
+		want    *Signature
+		wantErr bool
+	}{
+		{
+			"simple",
+			`v=1; a=rsa-sha256; d=example.net; s=brisbane;
       c=simple; q=dns/txt; i=@eng.example.net;
       t=1117574938; x=1118006938;
       h=from:to:subject:date;
       z=From:foo@eng.example.net|To:joe@example.com|
        Subject:demo=20run|Date:July=205,=202005=203:44:08=20PM=20-0700;
       bh=MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTI=;
-	  b=dzdVyOfAKCdLXdJOc9G2q8LoXSlEniSbav+yuU4zGeeruD00lszZVoG4ZHRNiYzR`: {
-			header: "DKIM-Signature",
-			emptyHashValue: `v=1; a=rsa-sha256; d=example.net; s=brisbane;
+	  b=dzdVyOfAKCdLXdJOc9G2q8LoXSlEniSbav+yuU4zGeeruD00lszZVoG4ZHRNiYzR`,
+			&Signature{
+				Header: "DKIM-Signature",
+				Raw: `v=1; a=rsa-sha256; d=example.net; s=brisbane;
+      c=simple; q=dns/txt; i=@eng.example.net;
+      t=1117574938; x=1118006938;
+      h=from:to:subject:date;
+      z=From:foo@eng.example.net|To:joe@example.com|
+       Subject:demo=20run|Date:July=205,=202005=203:44:08=20PM=20-0700;
+      bh=MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTI=;
+	  b=dzdVyOfAKCdLXdJOc9G2q8LoXSlEniSbav+yuU4zGeeruD00lszZVoG4ZHRNiYzR`,
+				emptyHashValue: `v=1; a=rsa-sha256; d=example.net; s=brisbane;
       c=simple; q=dns/txt; i=@eng.example.net;
       t=1117574938; x=1118006938;
       h=from:to:subject:date;
@@ -131,39 +189,52 @@ func TestParseSignature(t *testing.T) {
        Subject:demo=20run|Date:July=205,=202005=203:44:08=20PM=20-0700;
       bh=MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTI=;
 	  b=`,
-			algorithm:   algorithms["rsa-sha256"].hash(),
-			algorithmID: algorithms["rsa-sha256"].id,
-			hash: []byte{119, 55, 85, 200, 231, 192, 40, 39, 75,
-				93, 210, 78, 115, 209, 182, 171, 194, 232, 93, 41, 68, 158, 36,
-				155, 106, 255, 178, 185, 78, 51, 25, 231, 171, 184, 61, 52, 150,
-				204, 217, 86, 129, 184, 100, 116, 77, 137, 140, 209},
-			bodyHash: []byte{49, 50, 51, 52, 53, 54, 55, 56, 57, 48,
-				49, 50, 51, 52, 53, 54, 55, 56, 57, 48, 49, 50, 51, 52, 53, 54,
-				55, 56, 57, 48, 49, 50},
-			signerDomain:   "example.net",
-			headers:        []string{"from", "to", "subject", "date"},
-			userIdentifier: "@eng.example.net",
-			selector:       "brisbane",
-			timestamp:      time.Unix(1117574938, 0),
-			expiration:     time.Unix(1118006938, 0),
-			copiedHeaders: map[string]string{
-				"From":    "foo@eng.example.net",
-				"To":      "joe@example.com",
-				"Subject": "demo=20run",
-				"Date":    "July=205,=202005=203:44:08=20PM=20-0700",
+				algorithm:   algorithms["rsa-sha256"].hash(),
+				AlgorithmID: algorithms["rsa-sha256"].id,
+				Hash: []byte{119, 55, 85, 200, 231, 192, 40, 39, 75,
+					93, 210, 78, 115, 209, 182, 171, 194, 232, 93, 41, 68, 158, 36,
+					155, 106, 255, 178, 185, 78, 51, 25, 231, 171, 184, 61, 52, 150,
+					204, 217, 86, 129, 184, 100, 116, 77, 137, 140, 209},
+				BodyHash: []byte{49, 50, 51, 52, 53, 54, 55, 56, 57, 48,
+					49, 50, 51, 52, 53, 54, 55, 56, 57, 48, 49, 50, 51, 52, 53, 54,
+					55, 56, 57, 48, 49, 50},
+				SignerDomain:   "example.net",
+				Headers:        []string{"from", "to", "subject", "date"},
+				UserIdentifier: "@eng.example.net",
+				Selector:       "brisbane",
+				Timestamp:      time.Unix(1117574938, 0),
+				Expiration:     time.Unix(1118006938, 0),
+				CopiedHeaders: map[string]string{
+					"From":    "foo@eng.example.net",
+					"To":      "joe@example.com",
+					"Subject": "demo=20run",
+					"Date":    "July=205,=202005=203:44:08=20PM=20-0700",
+				},
+				query: Queries[qDNSTxt],
 			},
-			query: Queries[qDNSTxt],
+			false,
 		},
-		` v=1; a=rsa-sha1; d=example.net; s=brisbane;
+		{
+			"simple/relaxed",
+			` v=1; a=rsa-sha1; d=example.net; s=brisbane;
 			      c=simple/relaxed; q=dns/txt; i=@eng.example.net;
 			      t=1117574938; x=1118006938;
 			      h=from:to:subject:date;
 			      z=From:foo@eng.example.net|To:joe@example.com|
 			       Subject:demo=20run|Date:July=205,=202005=203:44:08=20PM=20-0700;
 			      bh=MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTI=;
-				  b=dzdVyOfAKCdLXdJOc9G2q8LoXSlEniSbav+yuU4zGeeruD00lszZVoG4ZHRNiYzR`: {
-			header: "DKIM-Signature",
-			emptyHashValue: ` v=1; a=rsa-sha1; d=example.net; s=brisbane;
+				  b=dzdVyOfAKCdLXdJOc9G2q8LoXSlEniSbav+yuU4zGeeruD00lszZVoG4ZHRNiYzR`,
+			&Signature{
+				Header: "DKIM-Signature",
+				Raw: ` v=1; a=rsa-sha1; d=example.net; s=brisbane;
+			      c=simple/relaxed; q=dns/txt; i=@eng.example.net;
+			      t=1117574938; x=1118006938;
+			      h=from:to:subject:date;
+			      z=From:foo@eng.example.net|To:joe@example.com|
+			       Subject:demo=20run|Date:July=205,=202005=203:44:08=20PM=20-0700;
+			      bh=MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTI=;
+				  b=dzdVyOfAKCdLXdJOc9G2q8LoXSlEniSbav+yuU4zGeeruD00lszZVoG4ZHRNiYzR`,
+				emptyHashValue: ` v=1; a=rsa-sha1; d=example.net; s=brisbane;
 			      c=simple/relaxed; q=dns/txt; i=@eng.example.net;
 			      t=1117574938; x=1118006938;
 			      h=from:to:subject:date;
@@ -171,90 +242,110 @@ func TestParseSignature(t *testing.T) {
 			       Subject:demo=20run|Date:July=205,=202005=203:44:08=20PM=20-0700;
 			      bh=MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTI=;
 				  b=`,
-			algorithm:   algorithms["rsa-sha1"].hash(),
-			algorithmID: algorithms["rsa-sha1"].id,
-			hash: []byte{119, 55, 85, 200, 231, 192, 40, 39,
-				75, 93, 210, 78, 115, 209, 182, 171, 194, 232, 93,
-				41, 68, 158, 36, 155, 106, 255, 178, 185, 78, 51,
-				25, 231, 171, 184, 61, 52, 150, 204, 217, 86, 129,
-				184, 100, 116, 77, 137, 140, 209},
-			bodyHash: []byte{49, 50, 51, 52, 53, 54, 55, 56, 57,
-				48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 48, 49, 50,
-				51, 52, 53, 54, 55, 56, 57, 48, 49, 50},
-			relaxedBody:    true,
-			signerDomain:   "example.net",
-			headers:        []string{"from", "to", "subject", "date"},
-			userIdentifier: "@eng.example.net",
-			selector:       "brisbane",
-			timestamp:      time.Unix(1117574938, 0),
-			expiration:     time.Unix(1118006938, 0),
-			copiedHeaders: map[string]string{
-				"From":    "foo@eng.example.net",
-				"To":      "joe@example.com",
-				"Subject": "demo=20run",
-				"Date":    "July=205,=202005=203:44:08=20PM=20-0700",
+				algorithm:   algorithms["rsa-sha1"].hash(),
+				AlgorithmID: algorithms["rsa-sha1"].id,
+				Hash: []byte{119, 55, 85, 200, 231, 192, 40, 39,
+					75, 93, 210, 78, 115, 209, 182, 171, 194, 232, 93,
+					41, 68, 158, 36, 155, 106, 255, 178, 185, 78, 51,
+					25, 231, 171, 184, 61, 52, 150, 204, 217, 86, 129,
+					184, 100, 116, 77, 137, 140, 209},
+				BodyHash: []byte{49, 50, 51, 52, 53, 54, 55, 56, 57,
+					48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 48, 49, 50,
+					51, 52, 53, 54, 55, 56, 57, 48, 49, 50},
+				RelaxedBody:    true,
+				SignerDomain:   "example.net",
+				Headers:        []string{"from", "to", "subject", "date"},
+				UserIdentifier: "@eng.example.net",
+				Selector:       "brisbane",
+				Timestamp:      time.Unix(1117574938, 0),
+				Expiration:     time.Unix(1118006938, 0),
+				CopiedHeaders: map[string]string{
+					"From":    "foo@eng.example.net",
+					"To":      "joe@example.com",
+					"Subject": "demo=20run",
+					"Date":    "July=205,=202005=203:44:08=20PM=20-0700",
+				},
 			},
+			false,
 		},
 	}
-	for h, want := range goodGirls {
-		got, err := parseSignature("DKIM-Signature", h)
-		if err != nil {
-			t.Errorf("for `%.20s...` got error `%s`", h, err)
-			t.FailNow()
+	const wantTest = -1
+	for testNo, test := range tests {
+		//noinspection GoBoolExpressions
+		if wantTest > -1 && wantTest != testNo {
+			continue
 		}
-		if eq := compareSignatures(want, got); !eq {
-			t.Errorf("for `%.20s...` got `%v`, want `%v`", h, got, want)
-		}
+		t.Run(fmt.Sprintf("%d_%s", testNo, test.name), func(t *testing.T) {
+			got, err := parseSignature("DKIM-Signature", test.raw)
+			if test.wantErr != (err != nil) {
+				t.Errorf("parseSignature() err=%v, wantErr=%t", err, test.wantErr)
+			}
+			if !compareSignatures(test.want, got) {
+				t.Errorf("parseSignature()\n\tgot =\"%#v\"\n\twant=\"%#v\"", got, test.want)
+			}
+		})
 	}
+}
 
-	badBoys := map[string]error{
-		``:                   ErrSignatureNotFound,
-		`v=0`:                ErrUnsupportedVersion,
-		`b==`:                ErrMalformedTagValue,
-		`d=`:                 ErrMalformedTagValue,
-		`h=`:                 ErrNoSignedFields,
-		`s=`:                 ErrMalformedTagValue,
-		`bh==`:               ErrMalformedTagValue,
-		`c=complex`:          ErrUnsupportedCanonicalization,
-		`c=simple/x-unknown`: ErrUnsupportedCanonicalization,
-		`c=simple/`:          ErrUnsupportedCanonicalization,
-		`c=/`:                ErrUnsupportedCanonicalization,
-		`c=/simple`:          ErrUnsupportedCanonicalization,
-		`l=a`:                ErrMalformedTagValue,
-		`q=dns/svc`:          ErrUnsupportedQueryType,
-		`t=z`:                ErrMalformedTagValue,
-		`x=z`:                ErrMalformedTagValue,
-		`xx=z`:               ErrBadSignature,
-		`i=`:                 ErrMalformedTagValue,
-		`a=rsa-md5`:          ErrUnsupportedAlgorithm,
-		` a=rsa-sha256; d=d; s=is; h=From; bh=MA MA; b=MA==`:                     ErrBadSignature,
-		`a=rsa-sha256; d=d; s=is; h=From; bh=MA==; b=MA==`:                       ErrBadSignature,
-		`v=1; a=rsa-sha256; d=d; s=brisbane; h=to:subject:date; bh=MA==; b=MA==`: ErrFromNotSigned,
+func TestParseSignature_Errors(t *testing.T) {
+	tests := []struct {
+		raw  string
+		want error
+	}{
+		{``, ErrSignatureNotFound},
+		{`v=0`, newTagError("v", "0", ErrUnsupportedVersion)},
+		{`b==`, newTagError("b", "=", ErrMalformedTagValue)},
+		{`d=`, newTagError("d", "", ErrNoDomainSpecified)},
+		{`h=`, newTagError("h", "", ErrNoSignedFields)},
+		{`s=`, newTagError("s", "", ErrEmptySelector)},
+		{`bh==`, newTagError("bh", "=", ErrMalformedTagValue)},
+		{`c=complex`, newTagError("c", "complex", ErrUnsupportedCanonicalization)},
+		{`c=simple/x-unknown`, newTagError("c", "simple/x-unknown", ErrUnsupportedCanonicalization)},
+		{`c=simple/`, newTagError("c", "simple/", ErrUnsupportedCanonicalization)},
+		{`c=/`, newTagError("c", "/", ErrUnsupportedCanonicalization)},
+		{`c=/simple`, newTagError("c", "/simple", ErrUnsupportedCanonicalization)},
+		{`l=a`, newTagError("l", "a", ErrNotDecimalNumber)},
+		{`q=dns/svc`, newTagError("q", "dns/svc", ErrUnsupportedQueryType)},
+		{`t=z`, newTagError("t", "z", ErrNotDecimalNumber)},
+		{`x=z`, newTagError("x", "z", ErrNotDecimalNumber)},
+		{`xx=z`, newSignatureError(ErrBadSignature, "no required tags found (v, a, b, bh, d, h, s)")},
+		{`i=`, newTagError("i", "", ErrEmptyUserIdentity)},
+		{`a=rsa-md5`, newTagError("a", "rsa-md5", ErrUnsupportedAlgorithm)},
+		{` a=rsa-sha256; d=d; s=is; h=From; bh=MA MA; b=MA==`, newSignatureError(ErrBadSignature, "no required tags found (v)")},
+		{`a=rsa-sha256; d=d; s=is; h=From; bh=MA==; b=MA==`, newSignatureError(ErrBadSignature, "no required tags found (v)")},
+		{`v=1; a=rsa-sha256; d=d; s=brisbane; h=to:subject:date; bh=MA==; b=MA==`, newTagError("h", "to:subject:date", ErrFromNotSigned)},
 	}
-	for h, want := range badBoys {
-		_, got := parseSignature("DKIM-Signature", h)
-		if got != want {
-			t.Errorf("for `%.30s...` got %q, want %q", h, got, want)
+	const wantTest = -1
+	for testNo, test := range tests {
+		//noinspection GoBoolExpressions
+		if wantTest > -1 && wantTest != testNo {
+			continue
 		}
+		t.Run(fmt.Sprintf("%d", testNo), func(t *testing.T) {
+			_, got := parseSignature("DKIM-Signature", test.raw)
+			if !reflect.DeepEqual(got, test.want) {
+				t.Errorf("parseSignature()\n\tgot =\"%#v\"\n\twant=\"%#v\"", got, test.want)
+			}
+		})
 	}
 }
 
 func TestVerify(t *testing.T) {
 	{
 		var s *Signature
-		want := NewResult(None, ErrSignatureNotFound, nil)
+		want := newResult(None, ErrSignatureNotFound, nil)
 		if got := s.verify(nil); !reflect.DeepEqual(got, want) {
 			t.Errorf("nil: got %v, want %v", got, want)
 		}
 	}
 
 	samples := map[string]*Result{
-		"_samples/s001.eml": NewResult(Pass, nil, nil),
-		"_samples/s002.eml": NewResult(Pass, nil, nil),
-		"_samples/s003.eml": NewResult(Pass, nil, nil),
-		"_samples/s004.eml": NewResult(Pass, nil, nil),
-		"_samples/s005.eml": NewResult(Fail, ErrBadSignature, nil),
-		"_samples/s006.eml": NewResult(Fail, ErrBadSignature, nil),
+		"_samples/s001.eml": newResult(Pass, nil, nil),
+		"_samples/s002.eml": newResult(Pass, nil, nil),
+		"_samples/s003.eml": newResult(Pass, nil, nil),
+		"_samples/s004.eml": newResult(Pass, nil, nil),
+		"_samples/s005.eml": newResult(Fail, ErrBadSignature, nil),
+		"_samples/s006.eml": newResult(Fail, ErrBadSignature, nil),
 	}
 	for sample, want := range samples {
 		f, _ := os.Open(sample)
@@ -264,10 +355,19 @@ func TestVerify(t *testing.T) {
 			continue
 		}
 		got := Verify("DKIM-Signature", m)
-		// remove Signature and make DeepEqual useful
+		//if !compareSignatures(got.Signature, want.Signature) {
+		//	t.Errorf("%v\n\t got \"%#v\"\n\twant \"%#v\"", sample, got.Signature, want.Signature)
+		//}
+
+		//if b, err := json.MarshalIndent(got, "", "  "); err == nil {
+		//	t.Log(sample, string(b))
+		//}
+
+		// TODO compare signatures and keys
 		got.Signature = nil
+		got.Key = nil
 		if !reflect.DeepEqual(got, want) {
-			t.Errorf("%v got `%v`, want `%v`", sample, got, want)
+			t.Errorf("%v\n\t got \"%#v\"\n\twant \"%#v\"", sample, got, want)
 		}
 		_ = f.Close()
 	}
@@ -279,11 +379,11 @@ func TestInvalidSigningEntityOption(t *testing.T) {
 		s *Signature
 		r *Result
 	}{
-		{&Signature{signerDomain: "com"},
-			NewResult(Permerror, ErrInvalidSigningEntity, &Signature{signerDomain: "com"})},
-		{&Signature{signerDomain: "ru"},
-			NewResult(Permerror, ErrInvalidSigningEntity, &Signature{signerDomain: "ru"})},
-		{&Signature{signerDomain: "io"}, nil},
+		{&Signature{SignerDomain: "com"},
+			newResult(Permerror, ErrInvalidSigningEntity, &Signature{SignerDomain: "com"})},
+		{&Signature{SignerDomain: "ru"},
+			newResult(Permerror, ErrInvalidSigningEntity, &Signature{SignerDomain: "ru"})},
+		{&Signature{SignerDomain: "io"}, nil},
 	}
 	for i, want := range samples {
 		if got := o(want.s, nil, nil); !reflect.DeepEqual(got, want.r) {
@@ -298,11 +398,11 @@ func TestSignatureTimingOption(t *testing.T) {
 		s *Signature
 		r *Result
 	}{
-		{&Signature{timestamp: time.Now().Add(1 * time.Minute)}, NewResult(Permerror, ErrBadSignature, nil)},
-		{&Signature{expiration: time.Now().Add(1 * time.Minute)}, nil},
-		{&Signature{timestamp: time.Now().Add(-1 * time.Minute)}, nil},
+		{&Signature{Timestamp: time.Now().Add(1 * time.Minute)}, newResult(Permerror, ErrBadSignature, nil)},
+		{&Signature{Expiration: time.Now().Add(1 * time.Minute)}, nil},
+		{&Signature{Timestamp: time.Now().Add(-1 * time.Minute)}, nil},
 		{&Signature{}, nil},
-		{&Signature{expiration: time.Now().Add(-1 * time.Minute)}, NewResult(Permerror, ErrSignatureExpired, nil)},
+		{&Signature{Expiration: time.Now().Add(-1 * time.Minute)}, newResult(Permerror, ErrSignatureExpired, nil)},
 	}
 	for i, want := range samples {
 		got := o(want.s, nil, nil)
@@ -342,19 +442,19 @@ func TestResultString(t *testing.T) {
 		want   string
 	}{
 		{nil, ""},
-		{NewResult(None, ErrSignatureNotFound, nil), "none; problem=signature not found"},
-		{NewResult(None, nil, nil), "none"},
-		{NewResult(Pass, nil, nil), "pass"},
-		{NewResult(Pass, nil, &Signature{
-			signerDomain: "example.com",
-		}), "pass; header.d=example.com"},
-		{NewResult(Pass, nil, &Signature{
-			userIdentifier: "jdoe@example.com",
-		}), "pass; header.i=jdoe@example.com"},
-		{NewResult(Pass, nil, &Signature{
-			signerDomain:   "example.com",
-			userIdentifier: "jdoe@example.com",
-		}), "pass; header.d=example.com; header.i=jdoe@example.com"},
+		{newResult(None, ErrSignatureNotFound, nil), "none; problem=signature not found"},
+		{newResult(None, nil, nil), "none"},
+		{newResult(Pass, nil, nil), "pass"},
+		{newResult(Pass, nil, &Signature{
+			SignerDomain: "example.com",
+		}), "pass; Header.d=example.com"},
+		{newResult(Pass, nil, &Signature{
+			UserIdentifier: "jdoe@example.com",
+		}), "pass; Header.i=jdoe@example.com"},
+		{newResult(Pass, nil, &Signature{
+			SignerDomain:   "example.com",
+			UserIdentifier: "jdoe@example.com",
+		}), "pass; Header.d=example.com; Header.i=jdoe@example.com"},
 	}
 	for i, sample := range samples {
 		got := sample.result.String()
@@ -432,7 +532,7 @@ func TestVerify_Concurrent(t *testing.T) {
 		"_samples/s007.eml",
 	} {
 		wg.Add(1)
-		go func(c *sync.Cond) {
+		go func(f string, c *sync.Cond) {
 			defer func() {
 				if x := recover(); x != nil {
 					t.Errorf("concurrent usage panic %s", x)
@@ -459,7 +559,7 @@ func TestVerify_Concurrent(t *testing.T) {
 				InvalidSigningEntityOption("com", "co.uk", "org", "net", "io", "uk"),
 				SignatureTimingOption(),
 			)
-		}(c)
+		}(f, c)
 	}
 	ready = true
 	c.Broadcast()
