@@ -2,7 +2,6 @@ package dkim
 
 import (
 	"bufio"
-	"errors"
 	"fmt"
 	"net/mail"
 	"os"
@@ -15,7 +14,7 @@ import (
 type cacheEntry struct {
 	s string
 	k *PublicKey
-	r *Result
+	e error
 }
 
 var cache = map[string]*cacheEntry{
@@ -23,22 +22,19 @@ var cache = map[string]*cacheEntry{
 	`20130820._domainkey.1e100.net`:          {s: `k=rsa; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAnOv6+Txyz+SEc7mT719QQtOj6g2MjpErYUGVrRGGc7f5rmE1cRP1lhwx8PVoHOiuRzyok7IqjvAub9kk9fBoE9uXJB1QaRdMnKz7W/UhWemK5TEUgW1xT5qtBfUIpFRL34h6FbHbeysb4szi7aTgerxI15o73cP5BoPVkQj4BQKkfTQYGNH03J5Db9uMqW/NNJ8fKCLKWO5C1e+NQ1lD6uwFCjJ6PWFmAIeUu9+LfYW89Tz1NnwtSkFC96Oky1cmnlBf4dhZ/Up/FMZmB9l7TA6gLEu6JijlDrNmx1o50WADPjjN4rGELLt3VuXn09y2piBPlZPU2SIiDQC0qX0JWQIDAQAB`},
 }
 
-func CachedPublicKeyQuery(s *Signature) (*PublicKey, *Result) {
+func CachedPublicKeyQuery(s *Signature) (*PublicKey, error) {
 	n := s.Selector + "._domainkey." + s.SignerDomain
 	c, found := cache[n]
 	if !found {
-		return nil, newResult(Temperror, ErrKeyUnavailable, nil)
+		return nil, ErrKeyUnavailable
 	}
-	if c.k != nil || c.r != nil {
-		return c.k, c.r
+	if c.k != nil || c.e != nil {
+		return c.k, c.e
 	}
 	k, e := parsePublicKey(c.s)
-	entry := &cacheEntry{k: k}
-	if e != nil {
-		entry.r = newResult(Temperror, e, nil)
-	}
+	entry := &cacheEntry{k: k, e: e}
 	cache[n] = entry
-	return entry.k, entry.r
+	return entry.k, nil
 }
 
 func TestMain(m *testing.M) {
@@ -56,20 +52,20 @@ func TestDnsTxtPublicKeyQuery(t *testing.T) {
 	}
 
 	sigs := map[string]*Signature{
-		"highgrade": &Signature{Selector: "highgrade", SignerDomain: "guerrillamail.com"},
-		"20130802":  &Signature{Selector: "20130820", SignerDomain: "1e100.net"},
-		"temperror": &Signature{Selector: "temperror", SignerDomain: "example.com"},
+		"highgrade": {Selector: "highgrade", SignerDomain: "guerrillamail.com"},
+		"20130802":  {Selector: "20130820", SignerDomain: "1e100.net"},
+		"temperror": {Selector: "temperror", SignerDomain: "example.com"},
 	}
 
 	tests := []struct {
 		name string
 		s    *Signature
 		k    *PublicKey
-		r    *Result
+		e    error
 	}{
 		{"highgrade", sigs["highgrade"], mustKey("highgrade", "guerrillamail.com"), nil},
 		{"20130802", sigs["20130802"], mustKey("20130820", "1e100.net"), nil},
-		{"temperror", sigs["temperror"], nil, newResult(Temperror, ErrKeyUnavailable, sigs["temperror"])},
+		{"temperror", sigs["temperror"], nil, ErrKeyUnavailable},
 	}
 
 	const wantTest = -1
@@ -79,20 +75,26 @@ func TestDnsTxtPublicKeyQuery(t *testing.T) {
 			continue
 		}
 		t.Run(fmt.Sprintf("%d_%s", testNo, test.name), func(t *testing.T) {
-			k, r := _DNSTxtPublicKeyQuery(test.s)
+			k, e := _DNSTxtPublicKeyQuery(test.s)
 			if !reflect.DeepEqual(k, test.k) {
-				t.Errorf("DNSTxtPublicKeyQuery()\n\t got k=%q\n\twant k=%q", k, test.k)
+				t.Errorf("DNSTxtPublicKeyQuery()\n\t got k=%v\n\twant k=%v", k, test.k)
 			}
-			if !reflect.DeepEqual(r, test.r) {
-				t.Errorf("DNSTxtPublicKeyQuery()\n\t got r=%q\n\twant r=%q", r, test.r)
+			if !reflect.DeepEqual(e, test.e) {
+				t.Errorf("DNSTxtPublicKeyQuery()\n\t got r=%v\n\twant r=%v", e, test.e)
 			}
 		})
 	}
 }
 
 func TestParsePublicKey(t *testing.T) {
-	unacceptableKey := func(t, v string, e error) error {
-		return newSignatureError(ErrUnacceptableKey, newTagError(t, v, e).Error())
+	unacceptableKey := func(t, v string, s string) error {
+		return &VerificationError{
+			Source:      KeyError,
+			Tag:         t,
+			Value:       v,
+			Err:         ErrUnacceptableKey,
+			Explanation: s,
+		}
 	}
 	tests := []struct {
 		name    string
@@ -101,27 +103,27 @@ func TestParsePublicKey(t *testing.T) {
 		wantErr error
 	}{
 		{"empty",
-			"", nil, newSignatureError(ErrUnacceptableKey, ErrEmptyKey.Error())},
+			"", nil, unacceptableKey("", "", expEmptyKey)},
 		{"wrong_version",
-			"v=1", nil, unacceptableKey("v", "1", ErrUnsupportedVersion)},
+			"v=1", nil, unacceptableKey("v", "1", expUnsupportedVersion)},
 		{"no data",
-			"v=DKIM1", nil, newSignatureError(ErrUnacceptableKey, "no required tags found (v)")},
+			"v=DKIM1", nil, unacceptableKey("", "", "no required tags found (v)")},
 		{"wrong algorithm",
-			"h=md5", nil, unacceptableKey("h", "md5", ErrUnsupportedAlgorithm)},
+			"h=md5", nil, unacceptableKey("h", "md5", expUnsupportedAlgorithm)},
 		{"wrong type",
-			"k=des", nil, unacceptableKey("k", "des", ErrUnsupportedAlgorithm)},
+			"k=des", nil, unacceptableKey("k", "des", expUnsupportedAlgorithm)},
 		{"revoked",
 			"p=", &PublicKey{revoked: true}, nil},
 		{"wrong data",
-			"p==", nil, unacceptableKey("p", "=", errors.New("illegal base64 data at input byte 0"))},
+			"p==", nil, unacceptableKey("p", "=", "illegal base64 data at input byte 0")},
 		{"not a key",
-			"p=MAMA", nil, unacceptableKey("p", "MAMA", errors.New("asn1: syntax error: data truncated"))},
+			"p=MAMA", nil, unacceptableKey("p", "MAMA", "asn1: syntax error: data truncated")},
 		{"revoked testing strict",
 			"p=; t=y:\n\ts", &PublicKey{Flags: []string{"y", "s"}, revoked: true, Testing: true, Strict: true}, nil},
 		{"x-teleport",
 			"p=; s=*:email:x-teleport", &PublicKey{revoked: true, Services: []string{"*", "email", "x-teleport"}}, nil},
 		{"no services listed",
-			"p=; s=x-teleport", nil, unacceptableKey("s", "x-teleport", ErrUnsupportedServices)},
+			"p=; s=x-teleport", nil, unacceptableKey("s", "x-teleport", expUnsupportedServices)},
 	}
 	const wantTest = -1
 	for testNo, test := range tests {
@@ -288,32 +290,44 @@ func TestParseSignature_Valid(t *testing.T) {
 }
 
 func TestParseSignature_Errors(t *testing.T) {
+	newTagError := func(t, v, exp string) error {
+		return &VerificationError{
+			Source:      SignatureError,
+			Tag:         t,
+			Value:       v,
+			Err:         ErrBadSignature,
+			Explanation: exp,
+		}
+	}
 	tests := []struct {
 		raw  string
 		want error
 	}{
-		{``, ErrSignatureNotFound},
-		{`v=0`, newTagError("v", "0", ErrUnsupportedVersion)},
-		{`b==`, newTagError("b", "=", ErrMalformedTagValue)},
-		{`d=`, newTagError("d", "", ErrNoDomainSpecified)},
-		{`h=`, newTagError("h", "", ErrNoSignedFields)},
-		{`s=`, newTagError("s", "", ErrEmptySelector)},
-		{`bh==`, newTagError("bh", "=", ErrMalformedTagValue)},
-		{`c=complex`, newTagError("c", "complex", ErrUnsupportedCanonicalization)},
-		{`c=simple/x-unknown`, newTagError("c", "simple/x-unknown", ErrUnsupportedCanonicalization)},
-		{`c=simple/`, newTagError("c", "simple/", ErrUnsupportedCanonicalization)},
-		{`c=/`, newTagError("c", "/", ErrUnsupportedCanonicalization)},
-		{`c=/simple`, newTagError("c", "/simple", ErrUnsupportedCanonicalization)},
-		{`l=a`, newTagError("l", "a", ErrNotDecimalNumber)},
-		{`q=dns/svc`, newTagError("q", "dns/svc", ErrUnsupportedQueryType)},
-		{`t=z`, newTagError("t", "z", ErrNotDecimalNumber)},
-		{`x=z`, newTagError("x", "z", ErrNotDecimalNumber)},
-		{`xx=z`, newSignatureError(ErrBadSignature, "no required tags found (v, a, b, bh, d, h, s)")},
-		{`i=`, newTagError("i", "", ErrEmptyUserIdentity)},
-		{`a=rsa-md5`, newTagError("a", "rsa-md5", ErrUnsupportedAlgorithm)},
-		{` a=rsa-sha256; d=d; s=is; h=From; bh=MA MA; b=MA==`, newSignatureError(ErrBadSignature, "no required tags found (v)")},
-		{`a=rsa-sha256; d=d; s=is; h=From; bh=MA==; b=MA==`, newSignatureError(ErrBadSignature, "no required tags found (v)")},
-		{`v=1; a=rsa-sha256; d=d; s=brisbane; h=to:subject:date; bh=MA==; b=MA==`, newTagError("h", "to:subject:date", ErrFromNotSigned)},
+		{``, &VerificationError{Source: VerifyError, Err: ErrSignatureNotFound}},
+		{`v=0`, newTagError("v", "0", expUnsupportedVersion)},
+		{`b==`, newTagError("b", "=", expMalformedTagValue)},
+		{`d=`, newTagError("d", "", expNoDomainSpecified)},
+		{`h=`, newTagError("h", "", expNoSignedFields)},
+		{`s=`, newTagError("s", "", expEmptySelector)},
+		{`bh==`, newTagError("bh", "=", expMalformedTagValue)},
+		{`c=complex`, newTagError("c", "complex", errUnsupportedCanonicalization.Error())},
+		{`c=simple/x-unknown`, newTagError("c", "simple/x-unknown", errUnsupportedCanonicalization.Error())},
+		{`c=simple/`, newTagError("c", "simple/", errUnsupportedCanonicalization.Error())},
+		{`c=/`, newTagError("c", "/", errUnsupportedCanonicalization.Error())},
+		{`c=/simple`, newTagError("c", "/simple", errUnsupportedCanonicalization.Error())},
+		{`l=a`, newTagError("l", "a", expNotDecimalNumber)},
+		{`q=dns/svc`, newTagError("q", "dns/svc", expUnsupportedQueryType)},
+		{`t=z`, newTagError("t", "z", expNotDecimalNumber)},
+		{`x=z`, newTagError("x", "z", expNotDecimalNumber)},
+		{`xx=z`,
+			&VerificationError{Source: SignatureError, Err: ErrBadSignature, Explanation: "no required tags found (v, a, b, bh, d, h, s)"}},
+		{`i=`, newTagError("i", "", expEmptyUserIdentity)},
+		{`a=rsa-md5`, newTagError("a", "rsa-md5", expUnsupportedAlgorithm)},
+		{` a=rsa-sha256; d=d; s=is; h=From; bh=MA MA; b=MA==`,
+			&VerificationError{Source: SignatureError, Err: ErrBadSignature, Explanation: "no required tags found (v)"}},
+		{`a=rsa-sha256; d=d; s=is; h=From; bh=MA==; b=MA==`,
+			&VerificationError{Source: SignatureError, Err: ErrBadSignature, Explanation: "no required tags found (v)"}},
+		{`v=1; a=rsa-sha256; d=d; s=brisbane; h=to:subject:date; bh=MA==; b=MA==`, newTagError("h", "to:subject:date", expFromNotSigned)},
 	}
 	const wantTest = -1
 	for testNo, test := range tests {
@@ -333,25 +347,28 @@ func TestParseSignature_Errors(t *testing.T) {
 func TestVerify(t *testing.T) {
 	{
 		var s *Signature
-		want := newResult(None, ErrSignatureNotFound, nil)
+		want := newResult(None, &VerificationError{Err: ErrSignatureNotFound}, nil, nil)
 		if got := s.verify(nil); !reflect.DeepEqual(got, want) {
 			t.Errorf("nil: got %v, want %v", got, want)
 		}
 	}
 
-	samples := map[string]*Result{
-		"_samples/s001.eml": newResult(Pass, nil, nil),
-		"_samples/s002.eml": newResult(Pass, nil, nil),
-		"_samples/s003.eml": newResult(Pass, nil, nil),
-		"_samples/s004.eml": newResult(Pass, nil, nil),
-		"_samples/s005.eml": newResult(Fail, ErrBadSignature, nil),
-		"_samples/s006.eml": newResult(Fail, ErrBadSignature, nil),
+	samples := []struct {
+		file string
+		r    *Result
+	}{
+		{"_samples/s001.eml", newResult(Pass, nil, nil, nil)},
+		{"_samples/s002.eml", newResult(Pass, nil, nil, nil)},
+		{"_samples/s003.eml", newResult(Pass, nil, nil, nil)},
+		{"_samples/s004.eml", newResult(Pass, nil, nil, nil)},
+		{"_samples/s005.eml", newResult(Fail, &VerificationError{Err: ErrBadSignature}, nil, nil)},
+		{"_samples/s006.eml", newResult(Fail, &VerificationError{Err: ErrBadSignature}, nil, nil)},
 	}
-	for sample, want := range samples {
-		f, _ := os.Open(sample)
+	for i, want := range samples {
+		f, _ := os.Open(want.file)
 		m, e := mail.ReadMessage(bufio.NewReader(f))
 		if e != nil {
-			t.Errorf("%v: %v", sample, e)
+			t.Errorf("%v: %v", i, e)
 			continue
 		}
 		got := Verify("DKIM-Signature", m)
@@ -359,15 +376,11 @@ func TestVerify(t *testing.T) {
 		//	t.Errorf("%v\n\t got \"%#v\"\n\twant \"%#v\"", sample, got.Signature, want.Signature)
 		//}
 
-		//if b, err := json.MarshalIndent(got, "", "  "); err == nil {
-		//	t.Log(sample, string(b))
-		//}
-
 		// TODO compare signatures and keys
 		got.Signature = nil
 		got.Key = nil
-		if !reflect.DeepEqual(got, want) {
-			t.Errorf("%v\n\t got \"%#v\"\n\twant \"%#v\"", sample, got, want)
+		if !reflect.DeepEqual(got, want.r) {
+			t.Errorf("%v\n\t got \"%#v\"\n\twant \"%#v\"", i, got, want.r)
 		}
 		_ = f.Close()
 	}
@@ -377,17 +390,20 @@ func TestInvalidSigningEntityOption(t *testing.T) {
 	o := InvalidSigningEntityOption("com", "ru")
 	samples := []struct {
 		s *Signature
-		r *Result
+		c ResultCode
+		e error
 	}{
-		{&Signature{SignerDomain: "com"},
-			newResult(Permerror, ErrInvalidSigningEntity, &Signature{SignerDomain: "com"})},
-		{&Signature{SignerDomain: "ru"},
-			newResult(Permerror, ErrInvalidSigningEntity, &Signature{SignerDomain: "ru"})},
-		{&Signature{SignerDomain: "io"}, nil},
+		{&Signature{SignerDomain: "com"}, Permerror, ErrInvalidSigningEntity},
+		{&Signature{SignerDomain: "ru"}, Permerror, ErrInvalidSigningEntity},
+		{&Signature{SignerDomain: "io"}, 0, nil},
 	}
 	for i, want := range samples {
-		if got := o(want.s, nil, nil); !reflect.DeepEqual(got, want.r) {
-			t.Errorf("sample#%d got %v, want %v", i, got, want.r)
+		code, err := o(want.s, nil, nil)
+		if code != want.c {
+			t.Errorf("sample#%d got code %v, want code %v", i, code, want.c)
+		}
+		if !reflect.DeepEqual(err, want.e) {
+			t.Errorf("sample#%d got err %v, want err %v", i, err, want.e)
 		}
 	}
 }
@@ -396,22 +412,22 @@ func TestSignatureTimingOption(t *testing.T) {
 	o := SignatureTimingOption()
 	samples := []struct {
 		s *Signature
-		r *Result
+		c ResultCode
+		e error
 	}{
-		{&Signature{Timestamp: time.Now().Add(1 * time.Minute)}, newResult(Permerror, ErrBadSignature, nil)},
-		{&Signature{Expiration: time.Now().Add(1 * time.Minute)}, nil},
-		{&Signature{Timestamp: time.Now().Add(-1 * time.Minute)}, nil},
-		{&Signature{}, nil},
-		{&Signature{Expiration: time.Now().Add(-1 * time.Minute)}, newResult(Permerror, ErrSignatureExpired, nil)},
+		{&Signature{Timestamp: time.Now().Add(1 * time.Minute)}, Permerror, ErrBadSignature},
+		{&Signature{Expiration: time.Now().Add(1 * time.Minute)}, 0, nil},
+		{&Signature{Timestamp: time.Now().Add(-1 * time.Minute)}, 0, nil},
+		{&Signature{}, 0, nil},
+		{&Signature{Expiration: time.Now().Add(-1 * time.Minute)}, Permerror, ErrSignatureExpired},
 	}
 	for i, want := range samples {
-		got := o(want.s, nil, nil)
-		if got != nil {
-			// remove Signature and make DeepEqual useful
-			got.Signature = nil
+		code, err := o(want.s, nil, nil)
+		if code != want.c {
+			t.Errorf("sample#%d got code %v, want code %v", i, code, want.c)
 		}
-		if !reflect.DeepEqual(got, want.r) {
-			t.Errorf("sample#%d got %v, want %v", i, got, want.r)
+		if !reflect.DeepEqual(err, want.e) {
+			t.Errorf("sample#%d got err %v, want err %v", i, err, want.e)
 		}
 	}
 }
@@ -441,20 +457,20 @@ func TestResultString(t *testing.T) {
 		result *Result
 		want   string
 	}{
-		{nil, ""},
-		{newResult(None, ErrSignatureNotFound, nil), "none; problem=signature not found"},
-		{newResult(None, nil, nil), "none"},
-		{newResult(Pass, nil, nil), "pass"},
+		//{nil, ""},
+		{newResult(None, &VerificationError{Err: ErrSignatureNotFound}, nil, nil), "none; problem=signature not found"},
+		{newResult(None, nil, nil, nil), "none"},
+		{newResult(Pass, nil, nil, nil), "pass"},
 		{newResult(Pass, nil, &Signature{
 			SignerDomain: "example.com",
-		}), "pass; Header.d=example.com"},
+		}, nil), "pass; Header.d=example.com"},
 		{newResult(Pass, nil, &Signature{
 			UserIdentifier: "jdoe@example.com",
-		}), "pass; Header.i=jdoe@example.com"},
+		}, nil), "pass; Header.i=jdoe@example.com"},
 		{newResult(Pass, nil, &Signature{
 			SignerDomain:   "example.com",
 			UserIdentifier: "jdoe@example.com",
-		}), "pass; Header.d=example.com; Header.i=jdoe@example.com"},
+		}, nil), "pass; Header.d=example.com; Header.i=jdoe@example.com"},
 	}
 	for i, sample := range samples {
 		got := sample.result.String()

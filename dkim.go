@@ -7,6 +7,7 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"hash"
 	"io"
@@ -21,27 +22,18 @@ import (
 
 // Result holds all details about result of DKIM signature verification
 type Result struct {
-	Result    ResultCode `json:"code"`
-	Error     error      `json:"error,omitempty"`
-	Signature *Signature `json:"signature,omitempty"`
-	Key       *PublicKey `json:"key,omitempty"`
+	Result    ResultCode         `json:"code"`
+	Error     *VerificationError `json:"error,omitempty"`
+	Signature *Signature         `json:"signature,omitempty"`
+	Key       *PublicKey         `json:"key,omitempty"`
 }
 
-// NewResult returns new *Result with provided details
-func newResult(r ResultCode, e error, s *Signature) *Result {
+func newResult(c ResultCode, e *VerificationError, s *Signature, k *PublicKey) *Result {
 	return &Result{
-		Result:    r,
-		Error:     e,
-		Signature: s,
-	}
-}
-
-func newResultWithKey(r ResultCode, e error, s *Signature, k *PublicKey) *Result {
-	return &Result{
-		Result:    r,
-		Error:     e,
+		Result:    c,
 		Signature: s,
 		Key:       k,
+		Error:     e,
 	}
 }
 
@@ -51,7 +43,8 @@ type ResultCode uint8
 
 // DKIM Verification Results
 const (
-	None ResultCode = iota
+	_ ResultCode = iota
+	None
 	Pass
 	Fail
 	Policy
@@ -105,68 +98,91 @@ func (r ResultCode) String() string {
 	}
 }
 
-type TagError struct {
-	Tag string `json:"tag"`
-	Val string `json:"val"`
-	Err error  `json:"err"`
+type ErrorSource uint8
+
+const (
+	VerifyError ErrorSource = iota
+	SignatureError
+	KeyError
+)
+
+type VerificationError struct {
+	Err         error       `json:"error"`
+	Explanation string      `json:"explanation,omitempty"`
+	Source      ErrorSource `json:"source"`
+	Tag         string      `json:"tag,omitempty"`
+	Value       string      `json:"value,omitempty"`
 }
 
-func newTagError(t, v string, err error) *TagError {
-	return &TagError{t, v, err}
-}
-
-func (e *TagError) Error() string {
+func (e *VerificationError) Error() string {
 	var w bytes.Buffer
 	w.WriteString(e.Err.Error())
-	w.WriteString(`; `)
-	w.WriteString(e.Tag)
-	w.WriteByte('=')
-	w.WriteString(e.Val)
+	if e.Explanation == "" {
+		return w.String()
+	}
+	w.WriteString(` (`)
+	w.WriteString(e.Explanation)
+	if e.Tag != "" {
+		w.WriteString(`; `)
+		w.WriteString(e.Tag)
+		w.WriteByte('=')
+		w.WriteString(e.Value)
+	}
+	w.WriteByte(')')
 	return w.String()
 }
 
-type SignatureError struct {
-	Err error  `json:"err"`
-	Exp string `json:"exp"`
-}
-
-func newSignatureError(err error, exp string) *SignatureError {
-	return &SignatureError{err, exp}
-}
-
-func (e *SignatureError) Error() string {
-	var w bytes.Buffer
-	w.WriteString(e.Err.Error())
-	w.WriteString(`; `)
-	w.WriteString(e.Exp)
-	return w.String()
+func (e *VerificationError) MarshalJSON() ([]byte, error) {
+	// TODO (dmotylev) need a better way for marshalling errors
+	if e == nil {
+		return []byte("null"), nil
+	}
+	var tmp struct {
+		Err         string      `json:"error"`
+		Explanation string      `json:"explanation,omitempty"`
+		Source      ErrorSource `json:"source"`
+		Tag         string      `json:"tag,omitempty"`
+		Value       string      `json:"value,omitempty"`
+	}
+	if e.Err != nil {
+		tmp.Err = e.Err.Error()
+	}
+	tmp.Explanation = e.Explanation
+	tmp.Source = e.Source
+	tmp.Tag = e.Tag
+	tmp.Value = e.Value
+	return json.Marshal(&tmp)
 }
 
 // Possible reasons of failed verification
 var (
-	ErrSignatureNotFound           = errors.New("signature not found")
+	ErrUnacceptableKey             = errors.New("unacceptable key")
 	ErrBadSignature                = errors.New("bad signature")
-	ErrUnsupportedVersion          = errors.New("unsupported version")
+	ErrSignatureNotFound           = errors.New("signature not found")
 	ErrUnsupportedAlgorithm        = errors.New("unsupported algorithm")
-	ErrMalformedTagValue           = errors.New("malformed tag value")
-	ErrUnsupportedQueryType        = errors.New("bad query type")
-	ErrUnsupportedCanonicalization = errors.New("bad canonicalization")
 	ErrInputError                  = errors.New("input error")
 	ErrDomainMismatch              = errors.New("domain mismatch")
 	ErrSignatureExpired            = errors.New("signature expired")
 	ErrInvalidSigningEntity        = errors.New("invalid signing entity")
 	ErrKeyUnavailable              = errors.New("key unavailable")
-	ErrUnacceptableKey             = errors.New("unacceptable key")
 	ErrTestingMode                 = errors.New("domain is testing DKIM")
 	ErrKeyRevoked                  = errors.New("key revoked")
-	ErrFromNotSigned               = errors.New("'From' field not signed")
-	ErrNoSignedFields              = errors.New("no signed fields")
-	ErrNoDomainSpecified           = errors.New("no domain specified")
-	ErrEmptyUserIdentity           = errors.New("empty user identity")
-	ErrNotDecimalNumber            = errors.New("not a decimal number")
-	ErrEmptySelector               = errors.New("empty Selector")
-	ErrUnsupportedServices         = errors.New("no supported services listed")
-	ErrEmptyKey                    = errors.New("empty key")
+	errUnsupportedCanonicalization = errors.New("bad canonicalization")
+)
+
+const (
+	expEmptyKey             = "empty key"
+	expUnsupportedVersion   = "unsupported version"
+	expUnsupportedAlgorithm = "unsupported algorithm"
+	expUnsupportedServices  = "no supported services listed"
+	expMalformedTagValue    = "malformed tag value"
+	expUnsupportedQueryType = "bad query type"
+	expFromNotSigned        = "'From' field not signed"
+	expNoSignedFields       = "no signed fields"
+	expNoDomainSpecified    = "no domain specified"
+	expEmptyUserIdentity    = "empty user identity"
+	expNotDecimalNumber     = "not a decimal number"
+	expEmptySelector        = "empty selector"
 )
 
 // Signature holds parsed DKIM signature
@@ -230,7 +246,7 @@ var (
 	reCanonicalization = regexp.MustCompile(`^([[:alnum:]](?:[[:alnum:]-]*[[:alnum:]]))(?:/([[:alnum:]](?:[[:alnum:]-]*[[:alnum:]])))?$`)
 	// z= Copied Header fields
 	// https://tools.ietf.org/html/rfc6376#page-25
-	reCopiedHeaders = regexp.MustCompile(`\|?\s*([^[:cntrl:]: ]+):([^\s\|]+)\s*`)
+	reCopiedHeaders = regexp.MustCompile(`\|?\s*([^[:cntrl:]: ]+):([^\s|]+)\s*`)
 	// a slightly relaxed version of key-h-tag or key-s-tag
 	// https://tools.ietf.org/html/rfc6376#page-27
 	reKeyXTag       = regexp.MustCompile(`:?\s*([[:alnum:]](?:[[:alnum:]-]*[[:alnum:]])?)\s*`)
@@ -257,7 +273,7 @@ func checkRelaxed(s string) (bool, error) {
 	case "relaxed":
 		return true, nil
 	default:
-		return false, ErrUnsupportedCanonicalization
+		return false, errUnsupportedCanonicalization
 	}
 }
 
@@ -265,9 +281,9 @@ func decodeBase64(s string) ([]byte, error) {
 	return base64.StdEncoding.DecodeString(strings.Replace(s, " ", "", -1))
 }
 
-func parseSignature(k, v string) (*Signature, error) {
+func parseSignature(k, v string) (*Signature, *VerificationError) {
 	if v == "" {
-		return nil, ErrSignatureNotFound
+		return nil, &VerificationError{Source: VerifyError, Err: ErrSignatureNotFound}
 	}
 
 	const (
@@ -310,6 +326,17 @@ func parseSignature(k, v string) (*Signature, error) {
 		// https://tools.ietf.org/html/rfc6376#page-30
 		emptyHashValue: reBTagOnly.ReplaceAllString(v, "$1"),
 	}
+
+	badSignature := func(t, v string, exp string) (*Signature, *VerificationError) {
+		return nil, &VerificationError{
+			Source:      SignatureError,
+			Tag:         t,
+			Value:       v,
+			Err:         ErrBadSignature,
+			Explanation: exp,
+		}
+	}
+
 	for _, m := range reTagValueList.FindAllStringSubmatch(v, -1) {
 		// m := ["t=v" "t" "v"]
 		key, value := m[1], m[2]
@@ -317,44 +344,44 @@ func parseSignature(k, v string) (*Signature, error) {
 		switch key {
 		case "v":
 			if value != "1" {
-				return nil, newTagError("v", value, ErrUnsupportedVersion)
+				return badSignature("v", value, expUnsupportedVersion)
 			}
 			required &^= fVersion
 		case "a":
 			a, found := algorithms[value]
 			if !found {
-				return nil, newTagError("a", value, ErrUnsupportedAlgorithm)
+				return badSignature("a", value, expUnsupportedAlgorithm)
 			}
 			s.algorithm = a.hash()
 			s.AlgorithmID = a.id
 			required &^= fAlgorithm
 		case "b":
 			if s.Hash, err = decodeBase64(value); err != nil {
-				return nil, newTagError("b", value, ErrMalformedTagValue)
+				return badSignature("b", value, expMalformedTagValue)
 			}
 			required &^= fHash
 		case "bh":
 			if s.BodyHash, err = decodeBase64(value); err != nil {
-				return nil, newTagError("bh", value, ErrMalformedTagValue)
+				return badSignature("bh", value, expMalformedTagValue)
 			}
 			required &^= fBodyHash
 		case "c":
 			m := reCanonicalization.FindAllStringSubmatch(value, 1)
 			// m := [["headerAlgorigthm/bodyAlgorithm" "headerAlgorigthm" "bodyAlgorithm"]]
 			if m == nil {
-				return nil, newTagError("c", value, ErrUnsupportedCanonicalization)
+				return badSignature("c", value, errUnsupportedCanonicalization.Error())
 			}
 			if s.RelaxedHeader, err = checkRelaxed(m[0][1]); err != nil {
-				return nil, newTagError("c", value, err)
+				return badSignature("c", value, err.Error())
 			}
 			if s.RelaxedBody, err = checkRelaxed(m[0][2]); err != nil {
-				return nil, newTagError("c", value, err)
+				return badSignature("c", value, err.Error())
 			}
 		case "d":
 			// The SDID MUST correspond to a valid DNS name under
 			// which the DKIM key record is published.
 			if value == "" {
-				return nil, newTagError("d", "", ErrNoDomainSpecified)
+				return badSignature("d", "", expNoDomainSpecified)
 			}
 			s.SignerDomain = value
 			required &^= fSignerDomain
@@ -366,7 +393,7 @@ func parseSignature(k, v string) (*Signature, error) {
 			// This list MUST NOT be empty.
 			// https://tools.ietf.org/html/rfc6376#page-21
 			if value == "" {
-				return nil, newTagError("h", "", ErrNoSignedFields)
+				return badSignature("h", "", expNoSignedFields)
 			}
 			acceptable := false
 			s.Headers = mapMatches(reSignedHeaders, value, func(m []string) string {
@@ -380,7 +407,7 @@ func parseSignature(k, v string) (*Signature, error) {
 			// MUST ignore the DKIM-Signature Header field and return PERMFAIL
 			// (From field not signed).
 			if !acceptable {
-				return nil, newTagError("h", value, ErrFromNotSigned)
+				return badSignature("h", value, expFromNotSigned)
 			}
 			required &^= fHeaders
 		case "i":
@@ -389,22 +416,22 @@ func parseSignature(k, v string) (*Signature, error) {
 			// sig-i-tag       = %x69 [FWS] "=" [FWS] [ Local-part ]
 			//                            "@" domain-name
 			if value == "" {
-				return nil, newTagError("i", "", ErrEmptyUserIdentity)
+				return badSignature("i", "", expEmptyUserIdentity)
 			}
 			s.UserIdentifier = value
 		case "l":
 			if s.Length, err = strconv.ParseInt(value, 10, 64); err != nil {
-				return nil, newTagError("l", value, ErrNotDecimalNumber)
+				return badSignature("l", value, expNotDecimalNumber)
 			}
 		case "q":
 			q, found := Queries[value]
 			if !found {
-				return nil, newTagError("q", value, ErrUnsupportedQueryType)
+				return badSignature("q", value, expUnsupportedQueryType)
 			}
 			s.query = q
 		case "s":
 			if value == "" {
-				return nil, newTagError("s", "", ErrEmptySelector)
+				return badSignature("s", "", expEmptySelector)
 			}
 			s.Selector = value
 			required &^= fSelector
@@ -413,7 +440,7 @@ func parseSignature(k, v string) (*Signature, error) {
 			// https://tools.ietf.org/html/rfc6376#page-24
 			var t int64
 			if t, err = strconv.ParseInt(value, 10, 64); err != nil {
-				return nil, newTagError("t", value, ErrNotDecimalNumber)
+				return badSignature("t", value, expNotDecimalNumber)
 			}
 			s.Timestamp = time.Unix(t, 0)
 		case "x":
@@ -424,7 +451,7 @@ func parseSignature(k, v string) (*Signature, error) {
 			// https://tools.ietf.org/html/rfc6376#page-25
 			var t int64
 			if t, err = strconv.ParseInt(value, 10, 64); err != nil {
-				return nil, newTagError("x", value, ErrNotDecimalNumber)
+				return badSignature("x", value, expNotDecimalNumber)
 			}
 			s.Expiration = time.Unix(t, 0)
 		case "z":
@@ -438,7 +465,7 @@ func parseSignature(k, v string) (*Signature, error) {
 		}
 	}
 	if required != 0 {
-		return nil, newSignatureError(ErrBadSignature, missedTags())
+		return badSignature("", "", missedTags())
 	}
 	return s, nil
 }
@@ -499,26 +526,26 @@ func bodyHash(in io.Reader, h hash.Hash, relaxed bool) ([]byte, error) {
 // the signature does not sign Header fields that the Verifier views to be
 // essential.  As a case in point, if MIME Header fields are not signed,
 // certain attacks may be possible that the Verifier would prefer to avoid.
-type VerifyOption func(s *Signature, k *PublicKey, m *mail.Message) *Result
+type VerifyOption func(s *Signature, k *PublicKey, m *mail.Message) (ResultCode, error)
 
 // SignatureTimingOption checks if signature is expired
 // Verifiers MAY ignore the DKIM-Signature Header field and return
 // PERMFAIL (signature expired) if it contains an "x=" tag and
 // the signature has expired.
 func SignatureTimingOption() VerifyOption {
-	return func(s *Signature, _ *PublicKey, _ *mail.Message) *Result {
+	return func(s *Signature, _ *PublicKey, _ *mail.Message) (ResultCode, error) {
 		now := time.Now()
 		if s.Timestamp.After(now) {
-			return newResult(Permerror, ErrBadSignature, s)
+			return Permerror, ErrBadSignature
 		}
 		expPresent := s.Expiration.After(timeZero)
 		if expPresent && s.Expiration.Before(now) {
-			return newResult(Permerror, ErrSignatureExpired, s)
+			return Permerror, ErrSignatureExpired
 		}
 		if expPresent && s.Timestamp.After(timeZero) && s.Expiration.Before(s.Timestamp) {
-			return newResult(Permerror, ErrBadSignature, s)
+			return Permerror, ErrBadSignature
 		}
-		return nil
+		return 0, nil
 	}
 }
 
@@ -533,27 +560,29 @@ func InvalidSigningEntityOption(domains ...string) VerifyOption {
 	for _, d := range domains {
 		index[d] = struct{}{}
 	}
-	return func(s *Signature, _ *PublicKey, _ *mail.Message) *Result {
+	return func(s *Signature, _ *PublicKey, _ *mail.Message) (ResultCode, error) {
 		if _, found := index[s.SignerDomain]; found {
-			return newResult(Permerror, ErrInvalidSigningEntity, s)
+			return Permerror, ErrInvalidSigningEntity
 		}
-		return nil
+		return 0, nil
 	}
 }
 
 // PublicKeyQuery defines API for implementation of "q=".
-type PublicKeyQuery func(*Signature) (*PublicKey, *Result)
+type PublicKeyQuery func(*Signature) (*PublicKey, error)
 
 // DNSTxtPublicKeyQuery provides implementation of "dns/txt" query.
-func _DNSTxtPublicKeyQuery(s *Signature) (*PublicKey, *Result) {
+func _DNSTxtPublicKeyQuery(s *Signature) (*PublicKey, error) {
 	records, err := net.LookupTXT(s.Selector + "._domainkey." + s.SignerDomain)
 	if err != nil {
-		return nil, newResult(Temperror, ErrKeyUnavailable, s)
+		// Assume lookup errors are temporary
+		// TODO better error handling
+		return nil, ErrKeyUnavailable
 	}
 
 	key, err := parsePublicKey(strings.Join(records, ""))
 	if err != nil {
-		return nil, newResult(Permerror, err, s)
+		return nil, err
 	}
 
 	return key, nil
@@ -578,12 +607,18 @@ func mapMatches(re *regexp.Regexp, s string, f func(g []string) string) []string
 // parsePublicKey parses textual representation of the key
 // See https://tools.ietf.org/html/rfc6376#section-3.6.1 for details
 func parsePublicKey(s string) (*PublicKey, error) {
-	unacceptableKey := func(t, v string, e error) (*PublicKey, error) {
-		return nil, newSignatureError(ErrUnacceptableKey, newTagError(t, v, e).Error())
+	unacceptableKey := func(t, v string, s string) (*PublicKey, error) {
+		return nil, &VerificationError{
+			Source:      KeyError,
+			Tag:         t,
+			Value:       v,
+			Err:         ErrUnacceptableKey,
+			Explanation: s,
+		}
 	}
 
 	if s == "" {
-		return nil, newSignatureError(ErrUnacceptableKey, ErrEmptyKey.Error())
+		return unacceptableKey("", "", expEmptyKey)
 	}
 	const (
 		fData uint64 = 1 << iota
@@ -613,7 +648,7 @@ func parsePublicKey(s string) (*PublicKey, error) {
 		switch key {
 		case "v": // Version of the DKIM key record
 			if value != "DKIM1" {
-				return unacceptableKey("v", value, ErrUnsupportedVersion)
+				return unacceptableKey("v", value, expUnsupportedVersion)
 			}
 			k.Version = value
 		case "h": // Acceptable Hash algorithms
@@ -627,13 +662,13 @@ func parsePublicKey(s string) (*PublicKey, error) {
 				return s
 			})
 			if !acceptable {
-				return unacceptableKey("h", value, ErrUnsupportedAlgorithm)
+				return unacceptableKey("h", value, expUnsupportedAlgorithm)
 			}
 		case "k": // Key type
 			if value != "rsa" {
 				// Unrecognized key types MUST be ignored.
 				// https://tools.ietf.org/html/rfc6376#page-27
-				return unacceptableKey("k", value, ErrUnsupportedAlgorithm)
+				return unacceptableKey("k", value, expUnsupportedAlgorithm)
 			}
 		case "n": // Notes that might be of interest to a human
 			k.Notes = value
@@ -644,15 +679,16 @@ func parsePublicKey(s string) (*PublicKey, error) {
 			if value != "" {
 				b, err := base64.StdEncoding.DecodeString(value)
 				if err != nil {
-					return unacceptableKey("p", value, err)
+					return unacceptableKey("p", value, err.Error())
 				}
 				i, err := x509.ParsePKIXPublicKey(b)
 				if err != nil {
-					return unacceptableKey("p", value, err)
+					return unacceptableKey("p", value, err.Error())
 				}
 				pkey, ok := i.(*rsa.PublicKey)
 				if !ok {
-					return unacceptableKey("p", value, ErrUnacceptableKey)
+					// should not happen
+					return unacceptableKey("p", value, "internal error")
 				}
 				k.Raw = b
 				k.key = pkey
@@ -672,7 +708,7 @@ func parsePublicKey(s string) (*PublicKey, error) {
 				return m[1]
 			})
 			if !acceptable {
-				return unacceptableKey("s", value, ErrUnsupportedServices)
+				return unacceptableKey("s", value, expUnsupportedServices)
 			}
 		case "t": // Flags
 			k.Flags = mapMatches(reKeyXTag, value, func(m []string) string {
@@ -688,13 +724,13 @@ func parsePublicKey(s string) (*PublicKey, error) {
 		}
 	}
 	if required != 0 {
-		return nil, newSignatureError(ErrUnacceptableKey, missedTags())
+		return unacceptableKey("", "", missedTags())
 	}
 
 	return k, nil
 }
 
-func (s *Signature) verifyBodyHash(r io.Reader) *Result {
+func (s *Signature) verifyBodyHash(r io.Reader) (ResultCode, error) {
 	// In Hash step 1, the Signer/Verifier MUST Hash the message body,
 	// canonicalized using the body canonicalization algorithm specified
 	// in the "c=" tag and then truncated to the Length specified in the "l=" tag.
@@ -705,14 +741,14 @@ func (s *Signature) verifyBodyHash(r io.Reader) *Result {
 
 	bh, err := bodyHash(r, s.algorithm, s.RelaxedBody)
 	if err != nil {
-		return newResult(Temperror, ErrInputError, s)
+		return Temperror, ErrInputError
 	}
 
 	if !bytes.Equal(bh, s.BodyHash) {
-		return newResult(Fail, ErrBadSignature, s)
+		return Fail, ErrBadSignature
 	}
 
-	return nil
+	return 0, nil
 }
 
 func compareDomains(u, d string, strict bool) bool {
@@ -743,39 +779,57 @@ func compareDomains(u, d string, strict bool) bool {
 func (s *Signature) verify(m *mail.Message, options ...VerifyOption) (result *Result) {
 	// TODO cache result
 	if s == nil {
-		return newResult(None, ErrSignatureNotFound, s)
+		return newResult(None, &VerificationError{Err: ErrSignatureNotFound}, s, nil)
 	}
 
-	var pkey *PublicKey
-	if pkey, result = s.query(s); result != nil {
-		return result
+	wrapErr := func(err error, exp string) *VerificationError {
+		return &VerificationError{Source: VerifyError, Err: err, Explanation: exp}
+	}
+
+	pkey, err := s.query(s)
+
+	switch err {
+	case nil: // no errors
+	case ErrKeyUnavailable:
+		return newResult(Temperror, wrapErr(ErrKeyUnavailable, ""), s, nil)
+	default: // others
+		if e, ok := err.(*VerificationError); ok {
+			return newResult(Permerror, e, s, nil)
+		}
+		return newResult(Permerror, wrapErr(ErrUnacceptableKey, err.Error()), s, nil)
 	}
 
 	if pkey.revoked {
-		return newResult(Fail, ErrKeyRevoked, s)
+		return newResult(Fail, wrapErr(ErrUnacceptableKey, ErrKeyRevoked.Error()), s, nil)
 	}
 
 	// Verifiers MUST NOT treat messages from Signers in testing mode
 	// differently from unsigned email
 	if pkey.Testing {
-		return newResult(None, ErrTestingMode, s)
+		return newResult(None, wrapErr(ErrUnacceptableKey, ErrTestingMode.Error()), s, nil)
 	}
 
 	if ok := compareDomains(s.UserIdentifier, s.SignerDomain, pkey.Strict); !ok {
-		return newResult(Permerror, ErrDomainMismatch, s)
+		return newResult(Permerror, wrapErr(ErrDomainMismatch, ""), s, nil)
 	}
 
 	// Fail fast here, provided options are fast
 	for _, option := range options {
-		if result = option(s, pkey, m); result != nil {
-			result.Key = pkey
-			return
+		if code, err := option(s, pkey, m); err != nil {
+			exp := err.Error()
+			if err == ErrBadSignature {
+				exp = ""
+			}
+			return newResult(code, wrapErr(ErrBadSignature, exp), s, pkey)
 		}
 	}
 
-	if result = s.verifyBodyHash(m.Body); result != nil {
-		result.Key = pkey
-		return
+	if code, err := s.verifyBodyHash(m.Body); err != nil {
+		exp := err.Error()
+		if err == ErrBadSignature {
+			exp = ""
+		}
+		return newResult(code, wrapErr(ErrBadSignature, exp), s, pkey)
 	}
 
 	// In Hash step 2, the Signer/Verifier MUST pass the following to the
@@ -805,10 +859,10 @@ func (s *Signature) verify(m *mail.Message, options ...VerifyOption) (result *Re
 	}
 	_, _ = w.Write(canonicalizedHeader(s.Header, s.emptyHashValue, s.RelaxedHeader))
 	if e := rsa.VerifyPKCS1v15(pkey.key, s.AlgorithmID, s.algorithm.Sum(nil), s.Hash); e != nil {
-		return newResultWithKey(Fail, ErrBadSignature, s, pkey)
+		return newResult(Fail, &VerificationError{Err: ErrBadSignature, Explanation: e.Error()}, s, pkey)
 	}
 
-	return newResultWithKey(Pass, nil, s, pkey)
+	return newResult(Pass, nil, s, pkey)
 }
 
 func getHeaderFunc(h mail.Header) func(k string) string {
@@ -884,14 +938,14 @@ func Verify(hdr string, msg *mail.Message, opts ...VerifyOption) *Result {
 	}
 	sigs := msg.Header[textproto.CanonicalMIMEHeaderKey(hdr)]
 	if len(sigs) == 0 {
-		return newResult(None, nil, nil)
+		return newResult(None, nil, nil, nil)
 	}
 	var (
 		s   *Signature
-		err error
+		err *VerificationError
 	)
 	if s, err = parseSignature(hdr, sigs[len(sigs)-1]); err != nil {
-		return newResult(Permerror, err, s)
+		return newResult(Permerror, err, s, nil)
 	}
 	return s.verify(msg, opts...)
 }
@@ -911,15 +965,17 @@ func (r *Result) String() string {
 		w.WriteString("; problem=")
 		w.WriteString(r.Error.Error())
 	}
-	if r.Signature != nil {
-		if r.Signature.SignerDomain != "" {
-			w.WriteString("; Header.d=")
-			w.WriteString(r.Signature.SignerDomain)
-		}
-		if r.Signature.UserIdentifier != "" {
-			w.WriteString("; Header.i=")
-			w.WriteString(r.Signature.UserIdentifier)
-		}
+	if r.Signature == nil {
+		return w.String()
+	}
+
+	if r.Signature.SignerDomain != "" {
+		w.WriteString("; Header.d=")
+		w.WriteString(r.Signature.SignerDomain)
+	}
+	if r.Signature.UserIdentifier != "" {
+		w.WriteString("; Header.i=")
+		w.WriteString(r.Signature.UserIdentifier)
 	}
 
 	return w.String()
