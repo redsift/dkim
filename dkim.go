@@ -89,13 +89,17 @@ func (r ResultCode) String() string {
 	case Temperror:
 		return "temperror"
 	// The message could not be verified due to some error that
-	// is unrecoverable, such as a required Header field being absent.  A
-	// later attempt is unlikely to produce a final result.
+	// is unrecoverable, such as a required Header field being absent.
+	// A later attempt is unlikely to produce a final result.
 	case Permerror:
 		return "permerror"
 	default:
 		return strconv.Itoa(int(r))
 	}
+}
+
+func (r ResultCode) MarshalText() ([]byte, error) {
+	return []byte(r.String()), nil
 }
 
 type ErrorSource uint8
