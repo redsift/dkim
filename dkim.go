@@ -189,13 +189,26 @@ const (
 	expEmptySelector        = "empty selector"
 )
 
+type AlgorithmID crypto.Hash
+
+func (id AlgorithmID) MarshalText() ([]byte, error) {
+	switch id {
+	case 3:
+		return []byte("SHA1"), nil
+	case 5:
+		return []byte("SHA256"), nil
+	default:
+		return []byte(strconv.FormatUint(uint64(id), 10)), nil
+	}
+}
+
 // Signature holds parsed DKIM signature
 type Signature struct {
 	Header         string `json:"header"` // Header of the signature
 	Raw            string `json:"raw"`    // Raw value of the signature
 	emptyHashValue string
 	algorithm      hash.Hash
-	AlgorithmID    crypto.Hash       `json:"algorithmId"`             // 3 (SHA1) or 5 (SHA256)
+	AlgorithmID    AlgorithmID       `json:"algorithmId"`             // 3 (SHA1) or 5 (SHA256)
 	Hash           []byte            `json:"hash"`                    // 'h' tag value
 	BodyHash       []byte            `json:"bodyHash"`                // 'bh' tag value
 	RelaxedHeader  bool              `json:"relaxedHeader"`           // header canonicalization algorithm
@@ -213,8 +226,9 @@ type Signature struct {
 
 // PublicKey holds parsed public key
 type PublicKey struct {
+	Raw        string   `json:"raw, omitempty"`       // raw value of the key record
 	Version    string   `json:"version, omitempty"`   // 'v' tag value
-	Raw        []byte   `json:"raw, omitempty"`       // 'p' tag value
+	Data       []byte   `json:"key, omitempty"`       // 'p' tag value
 	Algorithms []string `json:"algorithms,omitempty"` // parsed 'h' tag value; [] means "allowing all"
 	Services   []string `json:"services,omitempty"`   // parsed 's' tag value; [] is "*"
 	Flags      []string `json:"flags,omitempty"`      // parsed 't' tag value
@@ -357,7 +371,7 @@ func parseSignature(k, v string) (*Signature, *VerificationError) {
 				return badSignature("a", value, expUnsupportedAlgorithm)
 			}
 			s.algorithm = a.hash()
-			s.AlgorithmID = a.id
+			s.AlgorithmID = AlgorithmID(a.id)
 			required &^= fAlgorithm
 		case "b":
 			if s.Hash, err = decodeBase64(value); err != nil {
@@ -645,7 +659,7 @@ func parsePublicKey(s string) (*PublicKey, error) {
 		w.WriteByte(')')
 		return w.String()
 	}
-	k := &PublicKey{revoked: true}
+	k := &PublicKey{revoked: true, Raw: s}
 	for _, m := range reTagValueList.FindAllStringSubmatch(s, -1) {
 		// m := ["t=v" "t" "v"]
 		key, value := m[1], m[2]
@@ -694,7 +708,7 @@ func parsePublicKey(s string) (*PublicKey, error) {
 					// should not happen
 					return unacceptableKey("p", value, "internal error")
 				}
-				k.Raw = b
+				k.Data = b
 				k.key = pkey
 				k.revoked = false
 			}
@@ -862,7 +876,7 @@ func (s *Signature) verify(m *mail.Message, options ...VerifyOption) (result *Re
 		_, _ = w.Write(crlf)
 	}
 	_, _ = w.Write(canonicalizedHeader(s.Header, s.emptyHashValue, s.RelaxedHeader))
-	if e := rsa.VerifyPKCS1v15(pkey.key, s.AlgorithmID, s.algorithm.Sum(nil), s.Hash); e != nil {
+	if e := rsa.VerifyPKCS1v15(pkey.key, crypto.Hash(s.AlgorithmID), s.algorithm.Sum(nil), s.Hash); e != nil {
 		return newResult(Fail, &VerificationError{Err: ErrBadSignature, Explanation: e.Error()}, s, pkey)
 	}
 
