@@ -353,36 +353,39 @@ func TestVerify(t *testing.T) {
 		}
 	}
 
-	samples := []struct {
-		file string
-		r    *Result
+	tests := []struct {
+		file    string
+		result  ResultCode
+		wantErr bool
+		err     *VerificationError
 	}{
-		{"_samples/s001.eml", newResult(Pass, nil, nil, nil)},
-		{"_samples/s002.eml", newResult(Pass, nil, nil, nil)},
-		{"_samples/s003.eml", newResult(Pass, nil, nil, nil)},
-		{"_samples/s004.eml", newResult(Pass, nil, nil, nil)},
-		{"_samples/s005.eml", newResult(Fail, &VerificationError{Err: ErrBadSignature}, nil, nil)},
-		{"_samples/s006.eml", newResult(Fail, &VerificationError{Err: ErrBadSignature}, nil, nil)},
+		{"_samples/s001.eml", Pass, false, nil},
+		{"_samples/s002.eml", Pass, false, nil},
+		{"_samples/s003.eml", Pass, false, nil},
+		{"_samples/s004.eml", Pass, false, nil},
+		{"_samples/s005.eml", Fail, true, &VerificationError{Err: ErrBadSignature}},
+		{"_samples/s006.eml", Fail, true, &VerificationError{Err: ErrBadSignature}},
+		// TODO: prepare synthetic test for OverSigned header {"_samples/test160015800.eml", Pass, false, nil},
 	}
-	for i, want := range samples {
-		f, _ := os.Open(want.file)
-		m, e := mail.ReadMessage(bufio.NewReader(f))
-		if e != nil {
-			t.Errorf("%v: %v", i, e)
-			continue
-		}
-		got := Verify("DKIM-Signature", m)
-		//if !compareSignatures(got.Signature, want.Signature) {
-		//	t.Errorf("%v\n\t got \"%#v\"\n\twant \"%#v\"", sample, got.Signature, want.Signature)
-		//}
+	for _, test := range tests {
+		t.Run(test.file, func(t *testing.T) {
+			f, _ := os.Open(test.file)
+			defer f.Close()
 
-		// TODO compare signatures and keys
-		got.Signature = nil
-		got.Key = nil
-		if !reflect.DeepEqual(got, want.r) {
-			t.Errorf("%v\n\t got \"%#v\"\n\twant \"%#v\"", i, got, want.r)
-		}
-		_ = f.Close()
+			m, e := mail.ReadMessage(bufio.NewReader(f))
+			if e != nil {
+				t.Fatalf("can't read file: %v", e)
+			}
+			got := Verify("DKIM-Signature", m)
+
+			if test.wantErr == (test.err == got.Error) {
+				t.Errorf("Verify() err=%v, want=%v, wantErr=%t", got.Error, test.err, test.wantErr)
+			}
+
+			if test.result != got.Result {
+				t.Errorf("Verify() result=%v, want=%v", got.Result, test.result)
+			}
+		})
 	}
 }
 

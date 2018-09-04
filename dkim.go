@@ -872,7 +872,11 @@ func (s *Signature) verify(m *mail.Message, options ...VerifyOption) (result *Re
 	s.algorithm.Reset()
 	w := s.algorithm
 	for _, k := range s.Headers {
-		_, _ = w.Write(canonicalizedHeader(k, getHeader(k), s.RelaxedHeader))
+		h := canonicalizedHeader(k, getHeader(k), s.RelaxedHeader)
+		if h == nil {
+			continue
+		}
+		_, _ = w.Write(h)
 		_, _ = w.Write(crlf)
 	}
 	_, _ = w.Write(canonicalizedHeader(s.Header, s.emptyHashValue, s.RelaxedHeader))
@@ -914,6 +918,9 @@ func getHeaderFunc(h mail.Header) func(k string) string {
 }
 
 func canonicalizedHeader(k, v string, relaxed bool) []byte {
+	if v == "" {
+		return nil
+	}
 	if !relaxed {
 		// NOTE: textproto.Reader#ReadMIMEHeader returns map of
 		// CanonicalMIMEHeaderKey(key) and make impossible
@@ -924,21 +931,25 @@ func canonicalizedHeader(k, v string, relaxed bool) []byte {
 	// 3.4.2.  The "relaxed" Header Canonicalization Algorithm
 	// https://tools.ietf.org/html/rfc6376#section-3.4.2
 	//
-	// o  Convert all Header field names (not the Header field values) to
-	//    lowercase.  For example, convert "SUBJect: AbC" to "subject: AbC".
+	//   o  Convert all header field names (not the header field values) to
+	//      lowercase.  For example, convert "SUBJect: AbC" to "subject: AbC".
 	//
-	// o  Unfold all Header field continuation lines as described in
-	//    [RFC5322]; in particular, lines with terminators embedded in
-	//    continued Header field values (that is, CRLF sequences followed by
-	//    WSP) MUST be interpreted without the CRLF.  Implementations MUST
-	//    NOT remove the CRLF at the end of the Header field value.
+	//   o  Unfold all header field continuation lines as described in
+	//      [RFC5322]; in particular, lines with terminators embedded in
+	//      continued header field values (that is, CRLF sequences followed by
+	//      WSP) MUST be interpreted without the CRLF.  Implementations MUST
+	//      NOT remove the CRLF at the end of the header field value.
 	//
-	// o  Convert all sequences of one or more WSP characters to a single SP
-	//    character.  WSP characters here include those before and after a
-	//    line folding boundary.
+	//   o  Convert all sequences of one or more WSP characters to a single SP
+	//      character.  WSP characters here include those before and after a
+	//      line folding boundary.
 	//
-	// o  Delete all WSP characters at the end of each unfolded Header field
-	//    value.
+	//   o  Delete all WSP characters at the end of each unfolded header field
+	//      value.
+	//
+	//   o  Delete any WSP characters remaining before and after the colon
+	//      separating the header field name from the header field value.  The
+	//      colon separator MUST be retained.
 	b := bytes.TrimRight(reUnfoldAndReduceWS.ReplaceAll([]byte(v), sp), wsp)
 	h := make([]byte, 0, len(k)+len(b)+1)
 	h = append(h, []byte(strings.ToLower(k))...)
