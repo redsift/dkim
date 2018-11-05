@@ -22,6 +22,7 @@ import (
 
 // Result holds all details about result of DKIM signature verification
 type Result struct {
+	Order     int                `json:"order"`
 	Result    ResultCode         `json:"code"`
 	Error     *VerificationError `json:"error,omitempty"`
 	Signature *Signature         `json:"signature,omitempty"`
@@ -960,23 +961,32 @@ func canonicalizedHeader(k, v string, relaxed bool) []byte {
 
 // Verify extracts DKIM signature from message, verifies it and returns Result
 // of verification in accordance with RFC6376 (DKIM Signatures)
-func Verify(hdr string, msg *mail.Message, opts ...VerifyOption) *Result {
-	// TODO verify multiple signatures
-	if msg == nil {
-		return nil
+func Verify(hdr string, headers mail.Header, body io.Reader, opts ...VerifyOption) ([]*Result, error) {
+	if headers == nil || body == nil {
+		return nil, nil
 	}
-	sigs := msg.Header[textproto.CanonicalMIMEHeaderKey(hdr)]
-	if len(sigs) == 0 {
-		return newResult(None, nil, nil, nil)
+
+	b := new(bytes.Buffer)
+	if _, err := b.ReadFrom(body); err != nil {
+		return nil, err
 	}
-	var (
-		s   *Signature
-		err *VerificationError
-	)
-	if s, err = parseSignature(hdr, sigs[len(sigs)-1]); err != nil {
-		return newResult(Permerror, err, s, nil)
+
+	sigs := headers[textproto.CanonicalMIMEHeaderKey(hdr)]
+
+	results := make([]*Result, 0, len(sigs))
+	for i, raw := range sigs {
+		msg := &mail.Message{Header: headers, Body: bytes.NewReader(b.Bytes())}
+		var r *Result
+		if s, err := parseSignature(hdr, raw); err != nil {
+			r = newResult(Permerror, err, s, nil)
+		} else {
+			r = s.verify(msg, opts...)
+		}
+		r.Order = i
+		results = append(results, r)
 	}
-	return s.verify(msg, opts...)
+
+	return results, nil
 }
 
 // String returns textual representation of DKIM verification result.

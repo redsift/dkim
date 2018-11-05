@@ -353,19 +353,26 @@ func TestVerify(t *testing.T) {
 		}
 	}
 
-	tests := []struct {
-		file    string
-		result  ResultCode
+	type result struct {
+		order   int
+		code    ResultCode
 		wantErr bool
 		err     *VerificationError
+	}
+
+	tests := []struct {
+		file    string
+		wantErr bool
+		want    []result
 	}{
-		{"_samples/s001.eml", Pass, false, nil},
-		{"_samples/s002.eml", Pass, false, nil},
-		{"_samples/s003.eml", Pass, false, nil},
-		{"_samples/s004.eml", Pass, false, nil},
-		{"_samples/s005.eml", Fail, true, &VerificationError{Err: ErrBadSignature}},
-		{"_samples/s006.eml", Fail, true, &VerificationError{Err: ErrBadSignature}},
-		// TODO: prepare synthetic test for OverSigned header {"_samples/test160015800.eml", Pass, false, nil},
+		{"_samples/s001.eml", false, []result{{0, Pass, false, nil}}},
+		{"_samples/s002.eml", false, []result{{0, Pass, false, nil}}},
+		{"_samples/s003.eml", false, []result{{0, Pass, false, nil}}},
+		{"_samples/s004.eml", false, []result{{0, Pass, false, nil}}},
+		{"_samples/s005.eml", false, []result{{0, Fail, true, &VerificationError{Err: ErrBadSignature}}}},
+		{"_samples/s006.eml", false, []result{{0, Fail, true, &VerificationError{Err: ErrBadSignature}}}},
+		//{"_samples/test160015800.eml", false, []result{{0, Pass, false, nil}}},                                               // TODO: prepare synthetic test for OverSigned header
+		//{"_samples/test161455451.eml", false, []result{{0, Pass, false, nil}, {1, Pass, false, nil}, {2, Pass, false, nil}}}, // TODO: prepare synthetic test for multiple DKIM-Signature headers
 	}
 	for _, test := range tests {
 		t.Run(test.file, func(t *testing.T) {
@@ -376,14 +383,19 @@ func TestVerify(t *testing.T) {
 			if e != nil {
 				t.Fatalf("can't read file: %v", e)
 			}
-			got := Verify("DKIM-Signature", m)
+			got, err := Verify("DKIM-Signature", m.Header, m.Body)
 
-			if test.wantErr == (test.err == got.Error) {
-				t.Errorf("Verify() err=%v, want=%v, wantErr=%t", got.Error, test.err, test.wantErr)
+			if test.wantErr == (err == nil) {
+				t.Errorf("Verify() err=%v,wantErr=%t", err, test.wantErr)
 			}
 
-			if test.result != got.Result {
-				t.Errorf("Verify() result=%v, want=%v", got.Result, test.result)
+			results := make([]result, 0, len(got))
+			for i, r := range got {
+				results = append(results, result{i, r.Result, r.Error != nil, r.Error})
+			}
+
+			if !reflect.DeepEqual(test.want, results) {
+				t.Error("Verify() got!=want")
 			}
 		})
 	}
@@ -574,7 +586,7 @@ func TestVerify_Concurrent(t *testing.T) {
 				t.Errorf("error reading message %s", err)
 			}
 
-			_ = Verify("DKIM-Signature", msg,
+			_, _ = Verify("DKIM-Signature", msg.Header, msg.Body,
 				InvalidSigningEntityOption("com", "co.uk", "org", "net", "io", "uk"),
 				SignatureTimingOption(),
 			)
