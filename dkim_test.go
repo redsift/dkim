@@ -11,8 +11,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/y0ssar1an/q"
 )
 
 type cacheEntry struct {
@@ -395,8 +393,6 @@ func TestVerify(t *testing.T) {
 			if test.wantErr == (err == nil) {
 				t.Errorf("Verify() err=%v,wantErr=%t", err, test.wantErr)
 			}
-
-			q.Q(got)
 
 			results := make([]result, 0, len(got))
 			for i, r := range got {
