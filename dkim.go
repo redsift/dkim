@@ -532,8 +532,11 @@ func bodyHash(in io.Reader, h hash.Hash, relaxed bool) ([]byte, error) {
 		_, _ = w.Write(b)    // we do not expect any errors on Hash side
 		_, _ = w.Write(crlf) // ReadLineBytes eliding the final \n or \r\n from the returned string
 	}
+
+	// 3.4.3.  The "simple" Body Canonicalization Algorithm
 	// Note that a completely empty or missing body is canonicalized as a single "CRLF"
-	if w.c == 0 {
+	// https://tools.ietf.org/html/rfc6376#section-3.4.3
+	if !relaxed && w.c == 0 {
 		_, _ = w.Write(crlf)
 	}
 	return h.Sum(nil), nil
@@ -873,11 +876,11 @@ func (s *Signature) verify(m *mail.Message, options ...VerifyOption) (result *Re
 	s.algorithm.Reset()
 	w := s.algorithm
 	for _, k := range s.Headers {
-		h := canonicalizedHeader(k, getHeader(k), s.RelaxedHeader)
-		if h == nil {
+		v, found := getHeader(k)
+		if !found {
 			continue
 		}
-		_, _ = w.Write(h)
+		_, _ = w.Write(canonicalizedHeader(k, v, s.RelaxedHeader))
 		_, _ = w.Write(crlf)
 	}
 	_, _ = w.Write(canonicalizedHeader(s.Header, s.emptyHashValue, s.RelaxedHeader))
@@ -888,9 +891,9 @@ func (s *Signature) verify(m *mail.Message, options ...VerifyOption) (result *Re
 	return newResult(Pass, nil, s, pkey)
 }
 
-func getHeaderFunc(h mail.Header) func(k string) string {
+func getHeaderFunc(h mail.Header) func(k string) (string, bool) {
 	i := make(map[string]int, len(h))
-	return func(key string) string {
+	return func(key string) (string, bool) {
 		k := textproto.CanonicalMIMEHeaderKey(key)
 		var (
 			a     []string
@@ -899,11 +902,11 @@ func getHeaderFunc(h mail.Header) func(k string) string {
 		)
 		a, found = h[k]
 		if !found {
-			return ""
+			return "", false
 		}
 		n, found = i[k]
 		if n < 0 {
-			return ""
+			return "", false
 		}
 		if !found {
 			n = len(a) - 1
@@ -914,14 +917,11 @@ func getHeaderFunc(h mail.Header) func(k string) string {
 		}
 		n--
 		i[k] = n
-		return v
+		return v, true
 	}
 }
 
 func canonicalizedHeader(k, v string, relaxed bool) []byte {
-	if v == "" {
-		return nil
-	}
 	if !relaxed {
 		// NOTE: textproto.Reader#ReadMIMEHeader returns map of
 		// CanonicalMIMEHeaderKey(key) and make impossible

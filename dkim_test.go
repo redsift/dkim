@@ -2,13 +2,17 @@ package dkim
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
+	"io/ioutil"
 	"net/mail"
 	"os"
 	"reflect"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/y0ssar1an/q"
 )
 
 type cacheEntry struct {
@@ -371,6 +375,7 @@ func TestVerify(t *testing.T) {
 		{"_samples/s004.eml", false, []result{{0, Pass, false, nil}}},
 		{"_samples/s005.eml", false, []result{{0, Fail, true, &VerificationError{Err: ErrBadSignature}}}},
 		{"_samples/s006.eml", false, []result{{0, Fail, true, &VerificationError{Err: ErrBadSignature}}}},
+		//{"_samples/test161751693.eml", false, []result{{0, Pass, false, nil}}},                                               // TODO: prepare synthetic test for OverSigned header with empty Subject (or other) header
 		//{"_samples/test160015800.eml", false, []result{{0, Pass, false, nil}}},                                               // TODO: prepare synthetic test for OverSigned header
 		//{"_samples/test161455451.eml", false, []result{{0, Pass, false, nil}, {1, Pass, false, nil}, {2, Pass, false, nil}}}, // TODO: prepare synthetic test for multiple DKIM-Signature headers
 	}
@@ -379,7 +384,9 @@ func TestVerify(t *testing.T) {
 			f, _ := os.Open(test.file)
 			defer f.Close()
 
-			m, e := mail.ReadMessage(bufio.NewReader(f))
+			b, _ := ioutil.ReadAll(f)
+
+			m, e := mail.ReadMessage(bufio.NewReader(bytes.NewReader(b)))
 			if e != nil {
 				t.Fatalf("can't read file: %v", e)
 			}
@@ -388,6 +395,8 @@ func TestVerify(t *testing.T) {
 			if test.wantErr == (err == nil) {
 				t.Errorf("Verify() err=%v,wantErr=%t", err, test.wantErr)
 			}
+
+			q.Q(got)
 
 			results := make([]result, 0, len(got))
 			for i, r := range got {
@@ -496,51 +505,58 @@ func TestResultString(t *testing.T) {
 }
 
 func TestGetHeaderFunc(t *testing.T) {
+	type result struct {
+		value string
+		found bool
+	}
 	samples := []struct {
 		header mail.Header
 		keys   []string
-		want   []string
+		want   []result
 	}{
 		{
 			header: mail.Header(map[string][]string{
 				"From": {"from-0"},
 			}),
 			keys: []string{"from"},
-			want: []string{"from-0"},
+			want: []result{{"from-0", true}},
 		},
 		{
 			header: mail.Header(map[string][]string{
 				"From": {"from-0", "from-1"},
 			}),
 			keys: []string{"from", "from"},
-			want: []string{"from-1", "from-0"},
+			want: []result{{"from-1", true}, {"from-0", true}},
 		},
 		{
 			header: mail.Header(map[string][]string{
 				"From": {"from-0"},
 			}),
 			keys: []string{"from", "from"},
-			want: []string{"from-0", ""},
+			want: []result{{"from-0", true}, {"", false}},
 		},
 		{
 			header: mail.Header(map[string][]string{
 				"From": {},
 			}),
 			keys: []string{"from", "from"},
-			want: []string{"", ""},
+			want: []result{{"", true}, {"", false}},
 		},
 		{
 			keys: []string{"from", "from"},
-			want: []string{"", ""},
+			want: []result{{"", false}, {"", false}},
 		},
 	}
 
 	for i, s := range samples {
 		getHeader := getHeaderFunc(s.header)
 		for j := range s.keys {
-			got := getHeader(s.keys[j])
-			if got != s.want[j] {
-				t.Errorf("#%d.%d (%s) got `%s`, want `%s`", i, j, s.keys[j], got, s.want[j])
+			v, found := getHeader(s.keys[j])
+			if found != s.want[j].found {
+				t.Errorf("#%d.%d (%s) found=%t, want %t", i, j, s.keys[j], found, s.want[j].found)
+			}
+			if v != s.want[j].value {
+				t.Errorf("#%d.%d (%s) v=`%s`, want `%s`", i, j, s.keys[j], v, s.want[j].value)
 			}
 		}
 	}
