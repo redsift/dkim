@@ -163,11 +163,13 @@ func (e *VerificationError) MarshalJSON() ([]byte, error) {
 var (
 	ErrUnacceptableKey             = errors.New("unacceptable key")
 	ErrBadSignature                = errors.New("bad signature")
+	ErrBodyHashMismatched          = errors.New("body hash mismatched")
 	ErrSignatureNotFound           = errors.New("signature not found")
 	ErrUnsupportedAlgorithm        = errors.New("unsupported algorithm")
 	ErrInputError                  = errors.New("input error")
 	ErrDomainMismatch              = errors.New("domain mismatch")
 	ErrSignatureExpired            = errors.New("signature expired")
+	ErrInvalidTimestamp            = errors.New("invalid timestamp")
 	ErrInvalidSigningEntity        = errors.New("invalid signing entity")
 	ErrKeyUnavailable              = errors.New("key unavailable")
 	ErrTestingMode                 = errors.New("domain is testing DKIM")
@@ -558,14 +560,13 @@ func SignatureTimingOption() VerifyOption {
 	return func(s *Signature, _ *PublicKey, _ *mail.Message) (ResultCode, error) {
 		now := time.Now()
 		if s.Timestamp.After(now) {
-			return Permerror, ErrBadSignature
+			return Permerror, ErrInvalidTimestamp
 		}
-		expPresent := s.Expiration.After(timeZero)
-		if expPresent && s.Expiration.Before(now) {
+		if !s.Expiration.IsZero() && s.Expiration.Before(now) {
 			return Permerror, ErrSignatureExpired
 		}
-		if expPresent && s.Timestamp.After(timeZero) && s.Expiration.Before(s.Timestamp) {
-			return Permerror, ErrBadSignature
+		if !s.Expiration.IsZero() && !s.Timestamp.IsZero() && s.Expiration.Before(s.Timestamp) {
+			return Permerror, ErrSignatureExpired
 		}
 		return 0, nil
 	}
@@ -767,7 +768,7 @@ func (s *Signature) verifyBodyHash(r io.Reader) (ResultCode, error) {
 	}
 
 	if !bytes.Equal(bh, s.BodyHash) {
-		return Fail, ErrBadSignature
+		return Fail, ErrBodyHashMismatched
 	}
 
 	return 0, nil
@@ -804,8 +805,8 @@ func (s *Signature) verify(m *mail.Message, options ...VerifyOption) (result *Re
 		return newResult(None, &VerificationError{Err: ErrSignatureNotFound}, s, nil)
 	}
 
-	wrapErr := func(err error, exp string) *VerificationError {
-		return &VerificationError{Source: VerifyError, Err: err, Explanation: exp}
+	wrapErr := func(err error, exp string, tag string) *VerificationError {
+		return &VerificationError{Source: VerifyError, Err: err, Explanation: exp, Tag: tag}
 	}
 
 	pkey, err := s.query(s)
@@ -813,45 +814,37 @@ func (s *Signature) verify(m *mail.Message, options ...VerifyOption) (result *Re
 	switch err {
 	case nil: // no errors
 	case ErrKeyUnavailable:
-		return newResult(Temperror, wrapErr(ErrKeyUnavailable, ""), s, nil)
+		return newResult(Temperror, wrapErr(ErrKeyUnavailable, "", "s"), s, nil)
 	default: // others
 		if e, ok := err.(*VerificationError); ok {
 			return newResult(Permerror, e, s, nil)
 		}
-		return newResult(Permerror, wrapErr(ErrUnacceptableKey, err.Error()), s, nil)
+		return newResult(Permerror, wrapErr(ErrUnacceptableKey, err.Error(), "s"), s, nil)
 	}
 
 	if pkey.revoked {
-		return newResult(Fail, wrapErr(ErrUnacceptableKey, ErrKeyRevoked.Error()), s, nil)
+		return newResult(Fail, wrapErr(ErrUnacceptableKey, ErrKeyRevoked.Error(), "s"), s, nil)
 	}
 
 	// Verifiers MUST NOT treat messages from Signers in testing mode
 	// differently from unsigned email
 	if pkey.Testing {
-		return newResult(None, wrapErr(ErrUnacceptableKey, ErrTestingMode.Error()), s, nil)
+		return newResult(None, wrapErr(ErrUnacceptableKey, ErrTestingMode.Error(), "s"), s, nil)
 	}
 
 	if ok := compareDomains(s.UserIdentifier, s.SignerDomain, pkey.Strict); !ok {
-		return newResult(Permerror, wrapErr(ErrDomainMismatch, ""), s, nil)
+		return newResult(Permerror, wrapErr(ErrDomainMismatch, "", "d"), s, nil)
 	}
 
 	// Fail fast here, provided options are fast
 	for _, option := range options {
 		if code, err := option(s, pkey, m); err != nil {
-			exp := err.Error()
-			if err == ErrBadSignature {
-				exp = ""
-			}
-			return newResult(code, wrapErr(ErrBadSignature, exp), s, pkey)
+			return newResult(code, wrapErr(ErrBadSignature, err.Error(), ""), s, pkey)
 		}
 	}
 
 	if code, err := s.verifyBodyHash(m.Body); err != nil {
-		exp := err.Error()
-		if err == ErrBadSignature {
-			exp = ""
-		}
-		return newResult(code, wrapErr(ErrBadSignature, exp), s, pkey)
+		return newResult(code, wrapErr(ErrBadSignature, err.Error(), "bh"), s, pkey)
 	}
 
 	// In Hash step 2, the Signer/Verifier MUST pass the following to the
@@ -884,8 +877,8 @@ func (s *Signature) verify(m *mail.Message, options ...VerifyOption) (result *Re
 		_, _ = w.Write(crlf)
 	}
 	_, _ = w.Write(canonicalizedHeader(s.Header, s.emptyHashValue, s.RelaxedHeader))
-	if e := rsa.VerifyPKCS1v15(pkey.key, crypto.Hash(s.AlgorithmID), s.algorithm.Sum(nil), s.Hash); e != nil {
-		return newResult(Fail, &VerificationError{Err: ErrBadSignature, Explanation: e.Error()}, s, pkey)
+	if err := rsa.VerifyPKCS1v15(pkey.key, crypto.Hash(s.AlgorithmID), s.algorithm.Sum(nil), s.Hash); err != nil {
+		return newResult(Fail, wrapErr(ErrBadSignature, err.Error(), "b"), s, pkey)
 	}
 
 	return newResult(Pass, nil, s, pkey)

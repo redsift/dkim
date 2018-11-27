@@ -22,13 +22,14 @@ type cacheEntry struct {
 var cache = map[string]*cacheEntry{
 	`highgrade._domainkey.guerrillamail.com`: {s: `v=DKIM1; h=sha256; k=rsa; s=email; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAxp5MZYH1xvKFqy8nt87DzhbagNQ00zY2hp7S/UZN8mjUwhwqh2yTsV+yMSqP6q72D6/1ZSMyRNS3n3jnPbA8pHlJmHxsDJOVeuVGHemjSlLk5HNto73fDnr1TEyLEx3cqPUNn0CRYltSjwnx9xJmRY3htX8CCapiE5hDhu0yWOw3FqKUnADlKuzJCL7xOkWXHXffKJGCrA/3HxJkaeg0ghPxhVfRv04ex0jTy9knWqDfpsftp1sxbBtmdSowaxGunfly6Vcb+N4EFcnyCrzFjfy/WUNrnVuLvRGUUHXHhujVXzpR1cD6cNJowRDyyF8nhJvr+0w3eGV8TXx6FKsuAwIDAQAB`},
 	`20130820._domainkey.1e100.net`:          {s: `k=rsa; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAnOv6+Txyz+SEc7mT719QQtOj6g2MjpErYUGVrRGGc7f5rmE1cRP1lhwx8PVoHOiuRzyok7IqjvAub9kk9fBoE9uXJB1QaRdMnKz7W/UhWemK5TEUgW1xT5qtBfUIpFRL34h6FbHbeysb4szi7aTgerxI15o73cP5BoPVkQj4BQKkfTQYGNH03J5Db9uMqW/NNJ8fKCLKWO5C1e+NQ1lD6uwFCjJ6PWFmAIeUu9+LfYW89Tz1NnwtSkFC96Oky1cmnlBf4dhZ/Up/FMZmB9l7TA6gLEu6JijlDrNmx1o50WADPjjN4rGELLt3VuXn09y2piBPlZPU2SIiDQC0qX0JWQIDAQAB`},
+	`20161025._domainkey.1e100.net`:          {s: `k=rsa; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAuoesoDYpDnaUGZFoCElFKAkhbPoqBCfkmz3LqSfdAkye2DpoxlBx+qybWdYXe55mCWPeVUIk10Z/H9uriY4enbpmUM0t3mhgyrxuKwJtFg0YgQ0WGpMKecYjhYkt+pcHy7J11BrYh6lHx7mXf5SxuoOF1B6rG1MTzgBKDQqHsBvfz9xZSsNA5HW41EHu4dxRz/QLvzJYegLac8p6oU7l8O/yaVAse0DpgkVu+adfDV+flDq+nohyt2CJ+XHHdbIpE3cb01wp4Znz05zcYaTJd6WIQuis9sjGpS8sDEhY2gZkJVE2jvk1/mObTsyJuVuORapZnXO740owXe8Pvxq7uQIDAQAB`},
 }
 
 func CachedPublicKeyQuery(s *Signature) (*PublicKey, error) {
 	n := s.Selector + "._domainkey." + s.SignerDomain
 	c, found := cache[n]
 	if !found {
-		return nil, ErrKeyUnavailable
+		return _DNSTxtPublicKeyQuery(s)
 	}
 	if c.k != nil || c.e != nil {
 		return c.k, c.e
@@ -55,7 +56,7 @@ func TestDnsTxtPublicKeyQuery(t *testing.T) {
 
 	sigs := map[string]*Signature{
 		"highgrade": {Selector: "highgrade", SignerDomain: "guerrillamail.com"},
-		"20130802":  {Selector: "20130820", SignerDomain: "1e100.net"},
+		"20161025":  {Selector: "20161025", SignerDomain: "1e100.net"},
 		"temperror": {Selector: "temperror", SignerDomain: "example.com"},
 	}
 
@@ -66,7 +67,7 @@ func TestDnsTxtPublicKeyQuery(t *testing.T) {
 		e    error
 	}{
 		{"highgrade", sigs["highgrade"], mustKey("highgrade", "guerrillamail.com"), nil},
-		{"20130802", sigs["20130802"], mustKey("20130820", "1e100.net"), nil},
+		{"20161025", sigs["20161025"], mustKey("20161025", "1e100.net"), nil},
 		{"temperror", sigs["temperror"], nil, ErrKeyUnavailable},
 	}
 
@@ -82,7 +83,7 @@ func TestDnsTxtPublicKeyQuery(t *testing.T) {
 				t.Errorf("DNSTxtPublicKeyQuery()\n\t got k=%v\n\twant k=%v", k, test.k)
 			}
 			if !reflect.DeepEqual(e, test.e) {
-				t.Errorf("DNSTxtPublicKeyQuery()\n\t got r=%v\n\twant r=%v", e, test.e)
+				t.Errorf("DNSTxtPublicKeyQuery()\n\t got e=%v\n\twant e=%v", e, test.e)
 			}
 		})
 	}
@@ -371,11 +372,14 @@ func TestVerify(t *testing.T) {
 		{"_samples/s002.eml", false, []result{{0, Pass, false, nil}}},
 		{"_samples/s003.eml", false, []result{{0, Pass, false, nil}}},
 		{"_samples/s004.eml", false, []result{{0, Pass, false, nil}}},
-		{"_samples/s005.eml", false, []result{{0, Fail, true, &VerificationError{Err: ErrBadSignature}}}},
-		{"_samples/s006.eml", false, []result{{0, Fail, true, &VerificationError{Err: ErrBadSignature}}}},
+		{"_samples/s005.eml", false, []result{{0, Fail, true, &VerificationError{Err: ErrBadSignature, Explanation: "body hash mismatched", Tag: "bh"}}}},
+		{"_samples/s006.eml", false, []result{{0, Fail, true, &VerificationError{Err: ErrBadSignature, Explanation: "body hash mismatched", Tag: "bh"}}}},
+		{"_samples/s007.eml", false, []result{{0, Fail, true, &VerificationError{Err: ErrBadSignature, Explanation: "crypto/rsa: verification error", Tag: "b"}}}},
 		//{"_samples/test161751693.eml", false, []result{{0, Pass, false, nil}}},                                               // TODO: prepare synthetic test for OverSigned header with empty Subject (or other) header
 		//{"_samples/test160015800.eml", false, []result{{0, Pass, false, nil}}},                                               // TODO: prepare synthetic test for OverSigned header
 		//{"_samples/test161455451.eml", false, []result{{0, Pass, false, nil}, {1, Pass, false, nil}, {2, Pass, false, nil}}}, // TODO: prepare synthetic test for multiple DKIM-Signature headers
+		//{"_samples/case20181126.eml", false, []result{{0, Pass, false, nil}}},
+		//{"_samples/t/inbox-debug-4", false, []result{{0, Pass, false, nil}}},
 	}
 	for _, test := range tests {
 		t.Run(test.file, func(t *testing.T) {
@@ -435,7 +439,7 @@ func TestSignatureTimingOption(t *testing.T) {
 		c ResultCode
 		e error
 	}{
-		{&Signature{Timestamp: time.Now().Add(1 * time.Minute)}, Permerror, ErrBadSignature},
+		{&Signature{Timestamp: time.Now().Add(1 * time.Minute)}, Permerror, ErrInvalidTimestamp},
 		{&Signature{Expiration: time.Now().Add(1 * time.Minute)}, 0, nil},
 		{&Signature{Timestamp: time.Now().Add(-1 * time.Minute)}, 0, nil},
 		{&Signature{}, 0, nil},
