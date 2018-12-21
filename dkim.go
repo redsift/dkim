@@ -253,6 +253,7 @@ var (
 
 var (
 	reReduceWS          = regexp.MustCompile(`[ \t]+`)
+	reReduceFWS         = regexp.MustCompile(`[ \t\r\n]+`)
 	reUnfoldAndReduceWS = regexp.MustCompile(`[\s]+`)
 	sp                  = []byte(" ")
 	colon               = []byte(":")
@@ -701,7 +702,12 @@ func parsePublicKey(s string) (*PublicKey, error) {
 			// The syntax and semantics of this tag value before being
 			// encoded in base64 are defined by the "k=" tag.
 			if value != "" {
-				b, err := base64.StdEncoding.DecodeString(value)
+				// INFORMATIVE NOTE: A base64string is permitted to include
+				//         whitespace (FWS) at arbitrary places; however, any CRLFs must
+				//         be followed by at least one WSP character.  Implementers and
+				//         administrators are cautioned to ensure that selector TXT RRs
+				//         conform to this specification.
+				b, err := base64.StdEncoding.DecodeString(reReduceFWS.ReplaceAllString(value, ""))
 				if err != nil {
 					return unacceptableKey("p", value, err.Error())
 				}

@@ -129,8 +129,13 @@ func TestParsePublicKey(t *testing.T) {
 			"p=; s=*:email:x-teleport", &PublicKey{Raw: "p=; s=*:email:x-teleport", revoked: true, Services: []string{"*", "email", "x-teleport"}}, nil},
 		{"no services listed",
 			"p=; s=x-teleport", nil, unacceptableKey("s", "x-teleport", expUnsupportedServices)},
+		{"key with ws", `k=rsa; p=  NDM1NWE0Nm
+ IxOWQzNDhkYzJmNTdjM   DQ2ZjhlZjYzZDQ1Mzh   lYmI5MzYwMDBm 
+ M2M5ZWU5NTRhMjc0NjBkZDg2NSAgLQo=`, nil, unacceptableKey("p", `NDM1NWE0Nm
+ IxOWQzNDhkYzJmNTdjM   DQ2ZjhlZjYzZDQ1Mzh   lYmI5MzYwMDBm 
+ M2M5ZWU5NTRhMjc0NjBkZDg2NSAgLQo=`, "asn1: structure error: tags don't match (16 vs {class:0 tag:20 length:51 isCompound:true}) {optional:false explicit:false application:false private:false defaultValue:<nil> tag:<nil> stringType:0 timeType:0 set:false omitEmpty:false} publicKeyInfo @2")},
 	}
-	const wantTest = -1
+	const wantTest = 11
 	for testNo, test := range tests {
 		//noinspection GoBoolExpressions
 		if wantTest > -1 && wantTest != testNo {
