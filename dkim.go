@@ -596,7 +596,8 @@ type PublicKeyQuery func(*Signature) (*PublicKey, error)
 
 // DNSTxtPublicKeyQuery provides implementation of "dns/txt" query.
 func _DNSTxtPublicKeyQuery(s *Signature) (*PublicKey, error) {
-	records, err := net.LookupTXT(s.Selector + "._domainkey." + s.SignerDomain)
+	const FWS = "\t \r\n"
+	records, err := net.LookupTXT(strings.Trim(s.Selector, FWS) + "._domainkey." + strings.Trim(s.SignerDomain, FWS))
 	if err != nil {
 		// Assume lookup errors are temporary
 		// TODO better error handling

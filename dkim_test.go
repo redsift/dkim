@@ -55,9 +55,10 @@ func TestDnsTxtPublicKeyQuery(t *testing.T) {
 	}
 
 	sigs := map[string]*Signature{
-		"highgrade": {Selector: "highgrade", SignerDomain: "guerrillamail.com"},
-		"20161025":  {Selector: "20161025", SignerDomain: "1e100.net"},
-		"temperror": {Selector: "temperror", SignerDomain: "example.com"},
+		"highgrade":        {Selector: "highgrade", SignerDomain: "guerrillamail.com"},
+		"20161025":         {Selector: "20161025", SignerDomain: "1e100.net"},
+		"temperror":        {Selector: "temperror", SignerDomain: "example.com"},
+		"untrimmed-domain": {Selector: "20161025", SignerDomain: " 1e100.net "},
 	}
 
 	tests := []struct {
@@ -69,6 +70,7 @@ func TestDnsTxtPublicKeyQuery(t *testing.T) {
 		{"highgrade", sigs["highgrade"], mustKey("highgrade", "guerrillamail.com"), nil},
 		{"20161025", sigs["20161025"], mustKey("20161025", "1e100.net"), nil},
 		{"temperror", sigs["temperror"], nil, ErrKeyUnavailable},
+		{"untrimmed-domain", sigs["untrimmed-domain"], mustKey("20161025", "1e100.net"), nil},
 	}
 
 	const wantTest = -1
