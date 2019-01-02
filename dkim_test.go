@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"net/mail"
 	"os"
@@ -382,11 +383,14 @@ func TestVerify(t *testing.T) {
 		{"_samples/s005.eml", false, []result{{0, Fail, true, &VerificationError{Err: ErrBadSignature, Explanation: "body hash mismatched", Tag: "bh"}}}},
 		{"_samples/s006.eml", false, []result{{0, Fail, true, &VerificationError{Err: ErrBadSignature, Explanation: "body hash mismatched", Tag: "bh"}}}},
 		{"_samples/s007.eml", false, []result{{0, Fail, true, &VerificationError{Err: ErrBadSignature, Explanation: "crypto/rsa: verification error", Tag: "b"}}}},
-		//{"_samples/test161751693.eml", false, []result{{0, Pass, false, nil}}},                                               // TODO: prepare synthetic test for OverSigned header with empty Subject (or other) header
-		//{"_samples/test160015800.eml", false, []result{{0, Pass, false, nil}}},                                               // TODO: prepare synthetic test for OverSigned header
-		//{"_samples/test161455451.eml", false, []result{{0, Pass, false, nil}, {1, Pass, false, nil}, {2, Pass, false, nil}}}, // TODO: prepare synthetic test for multiple DKIM-Signature headers
-		//{"_samples/case20181126.eml", false, []result{{0, Pass, false, nil}}},
-		//{"_samples/t/inbox-debug-4", false, []result{{0, Pass, false, nil}}},
+		{"_samples/s008.eml", false, []result{{0, None, false, nil}}},
+		{"_samples/s009.eml", false, []result{{0, None, false, nil}}},
+		{"_samples/s010.eml", false, []result{{0, None, false, nil}}},
+		//{"_samples/_case161751693.eml", false, []result{{0, Pass, false, nil}}},                                               // TODO: prepare synthetic test for OverSigned header with empty Subject (or other) header
+		//{"_samples/_case160015800.eml", false, []result{{0, Pass, false, nil}}},                                               // TODO: prepare synthetic test for OverSigned header
+		//{"_samples/_case161455451.eml", false, []result{{0, Pass, false, nil}, {1, Pass, false, nil}, {2, Pass, false, nil}}}, // TODO: prepare synthetic test for multiple DKIM-Signature headers
+		//{"_samples/_case20181126.eml", false, []result{{0, Pass, false, nil}}},
+		//{"_samples/_local/inbox-debug-4", false, []result{{0, Pass, false, nil}}},
 	}
 	for _, test := range tests {
 		t.Run(test.file, func(t *testing.T) {
@@ -396,7 +400,11 @@ func TestVerify(t *testing.T) {
 			b, _ := ioutil.ReadAll(f)
 
 			m, e := mail.ReadMessage(bufio.NewReader(bytes.NewReader(b)))
-			if e != nil {
+			switch e {
+			case nil:
+			case io.EOF:
+				m = &mail.Message{}
+			default:
 				t.Fatalf("can't read file: %v", e)
 			}
 			got, err := Verify("DKIM-Signature", m.Header, m.Body)

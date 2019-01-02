@@ -963,7 +963,7 @@ func canonicalizedHeader(k, v string, relaxed bool) []byte {
 // of verification in accordance with RFC6376 (DKIM Signatures)
 func Verify(hdr string, headers mail.Header, body io.Reader, opts ...VerifyOption) ([]*Result, error) {
 	if headers == nil || body == nil {
-		return nil, nil
+		return []*Result{{Result: None}}, nil
 	}
 
 	b := new(bytes.Buffer)
@@ -984,6 +984,9 @@ func Verify(hdr string, headers mail.Header, body io.Reader, opts ...VerifyOptio
 		}
 		r.Order = i
 		results = append(results, r)
+	}
+	if len(results) == 0 {
+		return []*Result{{Result: None}}, nil
 	}
 
 	return results, nil

@@ -4,3 +4,4 @@ _vendor
 reports/*
 .DS_Store
 .idea
+_samples/_*
