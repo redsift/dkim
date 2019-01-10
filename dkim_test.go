@@ -391,6 +391,7 @@ func TestVerify(t *testing.T) {
 		//{"_samples/_case161455451.eml", false, []result{{0, Pass, false, nil}, {1, Pass, false, nil}, {2, Pass, false, nil}}}, // TODO: prepare synthetic test for multiple DKIM-Signature headers
 		//{"_samples/_case20181126.eml", false, []result{{0, Pass, false, nil}}},
 		//{"_samples/_local/inbox-debug-4", false, []result{{0, Pass, false, nil}}},
+		//{"_samples/_case20190110.eml", false, []result{{0, Pass, false, nil}}}, // TODO: prepare synthetic test for c=simple/simple
 	}
 	for _, test := range tests {
 		t.Run(test.file, func(t *testing.T) {
