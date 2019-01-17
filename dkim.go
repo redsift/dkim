@@ -27,6 +27,7 @@ type Result struct {
 	Error     *VerificationError `json:"error,omitempty"`
 	Signature *Signature         `json:"signature,omitempty"`
 	Key       *PublicKey         `json:"key,omitempty"`
+	Timestamp time.Time          `json:"timestamp"`
 }
 
 func newResult(c ResultCode, e *VerificationError, s *Signature, k *PublicKey) *Result {
@@ -169,7 +170,7 @@ var (
 	ErrInputError                  = errors.New("input error")
 	ErrDomainMismatch              = errors.New("domain mismatch")
 	ErrSignatureExpired            = errors.New("signature expired")
-	ErrInvalidTimestamp            = errors.New("invalid timestamp")
+	ErrTimestampInFuture           = errors.New("timestamp in the future")
 	ErrInvalidSigningEntity        = errors.New("invalid signing entity")
 	ErrKeyUnavailable              = errors.New("key unavailable")
 	ErrTestingMode                 = errors.New("domain is testing DKIM")
@@ -557,13 +558,13 @@ type VerifyOption func(s *Signature, k *PublicKey, m *mail.Message) (ResultCode,
 // Verifiers MAY ignore the DKIM-Signature Header field and return
 // PERMFAIL (signature expired) if it contains an "x=" tag and
 // the signature has expired.
-func SignatureTimingOption() VerifyOption {
+func SignatureTimingOption(drift time.Duration) VerifyOption {
 	return func(s *Signature, _ *PublicKey, _ *mail.Message) (ResultCode, error) {
-		now := time.Now()
-		if s.Timestamp.After(now) {
-			return Permerror, ErrInvalidTimestamp
+		now := time.Now().UTC()
+		if s.Timestamp.After(now.Add(drift)) {
+			return Permerror, ErrTimestampInFuture
 		}
-		if !s.Expiration.IsZero() && s.Expiration.Before(now) {
+		if !s.Expiration.IsZero() && s.Expiration.Add(drift).Before(now) {
 			return Permerror, ErrSignatureExpired
 		}
 		if !s.Expiration.IsZero() && !s.Timestamp.IsZero() && s.Expiration.Before(s.Timestamp) {
@@ -973,6 +974,8 @@ func Verify(hdr string, headers mail.Header, body io.Reader, opts ...VerifyOptio
 
 	sigs := headers[textproto.CanonicalMIMEHeaderKey(hdr)]
 
+	now := time.Now().UTC()
+
 	results := make([]*Result, 0, len(sigs))
 	for i, raw := range sigs {
 		msg := &mail.Message{Header: headers, Body: bytes.NewReader(b.Bytes())}
@@ -983,6 +986,7 @@ func Verify(hdr string, headers mail.Header, body io.Reader, opts ...VerifyOptio
 			r = s.verify(msg, opts...)
 		}
 		r.Order = i
+		r.Timestamp = now
 		results = append(results, r)
 	}
 	if len(results) == 0 {

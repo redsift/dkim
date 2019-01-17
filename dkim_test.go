@@ -449,26 +449,34 @@ func TestInvalidSigningEntityOption(t *testing.T) {
 }
 
 func TestSignatureTimingOption(t *testing.T) {
-	o := SignatureTimingOption()
-	samples := []struct {
-		s *Signature
-		c ResultCode
-		e error
+	o := SignatureTimingOption(5 * time.Minute)
+	tests := []struct {
+		name string
+		s    *Signature
+		c    ResultCode
+		e    error
 	}{
-		{&Signature{Timestamp: time.Now().Add(1 * time.Minute)}, Permerror, ErrInvalidTimestamp},
-		{&Signature{Expiration: time.Now().Add(1 * time.Minute)}, 0, nil},
-		{&Signature{Timestamp: time.Now().Add(-1 * time.Minute)}, 0, nil},
-		{&Signature{}, 0, nil},
-		{&Signature{Expiration: time.Now().Add(-1 * time.Minute)}, Permerror, ErrSignatureExpired},
+		{"t=now", &Signature{Timestamp: time.Now().UTC()}, 0, nil},
+		{"t=now+1m", &Signature{Timestamp: time.Now().Add(1 * time.Minute).UTC()}, 0, nil},
+		{"t=now-1m", &Signature{Timestamp: time.Now().Add(-1 * time.Minute).UTC()}, 0, nil},
+		{"t=now+10m", &Signature{Timestamp: time.Now().Add(10 * time.Minute).UTC()}, Permerror, ErrTimestampInFuture},
+		{"x=now", &Signature{Expiration: time.Now().UTC()}, 0, nil},
+		{"x=now+1m", &Signature{Expiration: time.Now().Add(1 * time.Minute).UTC()}, 0, nil},
+		{"x=now-1m", &Signature{Expiration: time.Now().Add(-1 * time.Minute).UTC()}, 0, nil},
+		{"x=now-10m", &Signature{Expiration: time.Now().Add(-10 * time.Minute).UTC()}, Permerror, ErrSignatureExpired},
+		{"x=now+10m", &Signature{Expiration: time.Now().Add(10 * time.Minute).UTC()}, 0, nil},
+		{"t=0,x=0", &Signature{}, 0, nil},
 	}
-	for i, want := range samples {
-		code, err := o(want.s, nil, nil)
-		if code != want.c {
-			t.Errorf("sample#%d got code %v, want code %v", i, code, want.c)
-		}
-		if !reflect.DeepEqual(err, want.e) {
-			t.Errorf("sample#%d got err %v, want err %v", i, err, want.e)
-		}
+	for testNo, test := range tests {
+		t.Run(fmt.Sprintf("%d_%s)", testNo, test.name), func(t *testing.T) {
+			code, err := o(test.s, nil, nil)
+			if code != test.c {
+				t.Errorf("SignatureTimingOption() got code %v, want code %v", code, test.c)
+			}
+			if !reflect.DeepEqual(err, test.e) {
+				t.Errorf("SignatureTimingOption() got err %v, want err %v", err, test.e)
+			}
+		})
 	}
 }
 
@@ -620,7 +628,7 @@ func TestVerify_Concurrent(t *testing.T) {
 
 			_, _ = Verify("DKIM-Signature", msg.Header, msg.Body,
 				InvalidSigningEntityOption("com", "co.uk", "org", "net", "io", "uk"),
-				SignatureTimingOption(),
+				SignatureTimingOption(5*time.Minute),
 			)
 		}(f, c)
 	}
