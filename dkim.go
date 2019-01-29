@@ -262,7 +262,7 @@ var (
 	crlf                = []byte("\r\n")
 	// Tag=Value Lists
 	// https://tools.ietf.org/html/rfc6376#section-3.2
-	reTagValueList = regexp.MustCompile(`;?\s*([[:alpha:]][[:alnum:]]*)\s*=\s*([^[:cntrl:];](?:[^;]*[^[:cntrl:];])*)?\s*`)
+	reTagValueList = regexp.MustCompile(`;?\s*([[:alpha:]][[:alnum:]]*)\s*=\s*([^[:cntrl:];](?:[^;]*[^[:cntrl:]\s;])*)?\s*`)
 	reBTagOnly     = regexp.MustCompile(`(;?\s*b\s*=)\s*([^[:cntrl:];](?:[^;]*[^[:cntrl:];])*)?\s*`)
 	// c= Message canonicalization
 	// https://tools.ietf.org/html/rfc6376#page-20
