@@ -71,7 +71,6 @@ func TestDnsTxtPublicKeyQuery(t *testing.T) {
 		{"highgrade", sigs["highgrade"], mustKey("highgrade", "guerrillamail.com"), nil},
 		{"20161025", sigs["20161025"], mustKey("20161025", "1e100.net"), nil},
 		{"temperror", sigs["temperror"], nil, ErrKeyUnavailable},
-		{"untrimmed-domain", sigs["untrimmed-domain"], mustKey("20161025", "1e100.net"), nil},
 	}
 
 	const wantTest = -1
