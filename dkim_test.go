@@ -12,6 +12,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/google/go-cmp/cmp"
 )
 
 type cacheEntry struct {
@@ -364,10 +366,10 @@ func TestVerify(t *testing.T) {
 	}
 
 	type result struct {
-		order   int
-		code    ResultCode
-		wantErr bool
-		err     *VerificationError
+		Order   int
+		Code    ResultCode
+		WantErr bool
+		Err     *VerificationError
 	}
 
 	tests := []struct {
@@ -390,7 +392,8 @@ func TestVerify(t *testing.T) {
 		//{"_samples/_case161455451.eml", false, []result{{0, Pass, false, nil}, {1, Pass, false, nil}, {2, Pass, false, nil}}}, // TODO: prepare synthetic test for multiple DKIM-Signature headers
 		//{"_samples/_case20181126.eml", false, []result{{0, Pass, false, nil}}},
 		//{"_samples/_local/inbox-debug-4", false, []result{{0, Pass, false, nil}}},
-		//{"_samples/_case20190110.eml", false, []result{{0, Pass, false, nil}}}, // TODO: prepare synthetic test for c=simple/simple
+		{"_samples/_case20190110.eml", false, []result{{0, Pass, false, nil}}}, // TODO: prepare synthetic test for c=simple/simple
+		{"_samples/_case20190211.eml", false, []result{{0, Pass, false, nil}}},
 	}
 	for _, test := range tests {
 		t.Run(test.file, func(t *testing.T) {
@@ -418,11 +421,33 @@ func TestVerify(t *testing.T) {
 				results = append(results, result{i, r.Result, r.Error != nil, r.Error})
 			}
 
-			if !reflect.DeepEqual(test.want, results) {
-				t.Error("Verify() got!=want")
+			if diff := cmp.Diff(test.want, results, cmp.Comparer(cmpVerificationErrors)); diff != "" {
+				t.Errorf("Verify() results differs: (-want +got)\n%s", diff)
 			}
 		})
 	}
+}
+
+func cmpVerificationErrors(lv, rv *VerificationError) bool {
+	if lv != nil && rv != nil {
+		if lv.Err != rv.Err {
+			return false
+		}
+		if lv.Err != nil && rv.Err != nil && lv.Err.Error() != rv.Err.Error() {
+			return false
+		}
+		if lv.Explanation != rv.Explanation {
+			return false
+		}
+		if lv.Source != rv.Source {
+			return false
+		}
+		if lv.Tag != rv.Tag {
+			return false
+		}
+		return lv.Value == rv.Value
+	}
+	return lv == rv
 }
 
 func TestInvalidSigningEntityOption(t *testing.T) {
