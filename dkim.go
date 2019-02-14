@@ -230,9 +230,9 @@ type Signature struct {
 
 // PublicKey holds parsed public key
 type PublicKey struct {
-	Raw        string   `json:"raw, omitempty"`       // raw value of the key record
-	Version    string   `json:"version, omitempty"`   // 'v' tag value
-	Data       []byte   `json:"key, omitempty"`       // 'p' tag value
+	Raw        string   `json:"raw,omitempty"`        // raw value of the key record
+	Version    string   `json:"version,omitempty"`    // 'v' tag value
+	Data       []byte   `json:"key,omitempty"`        // 'p' tag value
 	Algorithms []string `json:"algorithms,omitempty"` // parsed 'h' tag value; [] means "allowing all"
 	Services   []string `json:"services,omitempty"`   // parsed 's' tag value; [] is "*"
 	Flags      []string `json:"flags,omitempty"`      // parsed 't' tag value
@@ -275,7 +275,6 @@ var (
 	reKeyXTag       = regexp.MustCompile(`:?\s*([[:alnum:]](?:[[:alnum:]-]*[[:alnum:]])?)\s*`)
 	reKeySTag       = regexp.MustCompile(`:?\s*([[:alnum:]*](?:[[:alnum:]-]*[[:alnum:]])?)?\s*`)
 	reSignedHeaders = regexp.MustCompile(`:?\s*([^[:cntrl:]: ]+)\s*`)
-	timeZero        = time.Unix(0, 0)
 	algorithms      = map[string]*algorithm{
 		"rsa-sha1":   {crypto.SHA1, crypto.SHA1.New},
 		"rsa-sha256": {crypto.SHA256, crypto.SHA256.New},
