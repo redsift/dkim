@@ -20,9 +20,11 @@ import (
 // A Reader implements convenience methods for reading requests
 // or responses from a text protocol network connection.
 type Reader struct {
-	R   *bufio.Reader
-	dot *dotReader
-	buf []byte // a re-usable buffer for readContinuedLineSlice
+	R     *bufio.Reader
+	dot   *dotReader
+	buf   []byte // a re-usable buffer for readContinuedLineSlice
+	obuf  []byte // a re-usable buffer for readContinuedLineSlice (whitespaces not trimmed)
+	wsbuf []byte // a re-usable buffer for skipSpaces
 }
 
 // NewReader returns a new Reader reading from r.
@@ -92,7 +94,7 @@ func (r *Reader) readLineSlice() ([]byte, error) {
 // A line consisting of only white space is never continued.
 //
 func (r *Reader) ReadContinuedLine() (string, error) {
-	line, err := r.readContinuedLineSlice()
+	line, _, err := r.readContinuedLineSlice()
 	return string(line), err
 }
 
@@ -113,7 +115,7 @@ func trim(s []byte) []byte {
 // ReadContinuedLineBytes is like ReadContinuedLine but
 // returns a []byte instead of a string.
 func (r *Reader) ReadContinuedLineBytes() ([]byte, error) {
-	line, err := r.readContinuedLineSlice()
+	line, _, err := r.readContinuedLineSlice()
 	if line != nil {
 		buf := make([]byte, len(line))
 		copy(buf, line)
@@ -122,14 +124,14 @@ func (r *Reader) ReadContinuedLineBytes() ([]byte, error) {
 	return line, err
 }
 
-func (r *Reader) readContinuedLineSlice() ([]byte, error) {
+func (r *Reader) readContinuedLineSlice() ([]byte, []byte, error) {
 	// Read the first line.
 	line, err := r.readLineSlice()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if len(line) == 0 { // blank line - no continuation
-		return line, nil
+		return line, nil, nil
 	}
 
 	// Optimistically assume that we have started to buffer the next line
@@ -139,24 +141,32 @@ func (r *Reader) readContinuedLineSlice() ([]byte, error) {
 	if r.R.Buffered() > 1 {
 		peek, err := r.R.Peek(1)
 		if err == nil && isASCIILetter(peek[0]) {
-			return trim(line), nil
+			return trim(line), line, nil
 		}
 	}
 
 	// ReadByte or the next readLineSlice will flush the read buffer;
 	// copy the slice into buf.
 	r.buf = append(r.buf[:0], trim(line)...)
+	r.obuf = append(r.obuf[:0], trim(line)...)
 
 	// Read continuation lines.
-	for r.skipSpace() > 0 {
+	for {
+		n, ws := r.skipSpace()
+		if n == 0 {
+			break
+		}
 		line, err := r.readLineSlice()
 		if err != nil {
 			break
 		}
 		r.buf = append(r.buf, ' ')
 		r.buf = append(r.buf, trim(line)...)
+		r.obuf = append(r.obuf, '\n')
+		r.obuf = append(r.obuf, ws...)
+		r.obuf = append(r.obuf, line...)
 	}
-	return r.buf, nil
+	return r.buf, r.obuf, nil
 }
 
 func isASCIILetter(b byte) bool {
@@ -165,8 +175,9 @@ func isASCIILetter(b byte) bool {
 }
 
 // skipSpace skips R over all spaces and returns the number of bytes skipped.
-func (r *Reader) skipSpace() int {
+func (r *Reader) skipSpace() (int, []byte) {
 	n := 0
+	r.wsbuf = r.wsbuf[:0]
 	for {
 		c, err := r.R.ReadByte()
 		if err != nil {
@@ -174,12 +185,13 @@ func (r *Reader) skipSpace() int {
 			break
 		}
 		if c != ' ' && c != '\t' {
-			r.R.UnreadByte()
+			_ = r.R.UnreadByte()
 			break
 		}
+		r.wsbuf = append(r.wsbuf, c)
 		n++
 	}
-	return n
+	return n, r.wsbuf
 }
 
 func (r *Reader) readCodeLine(expectCode int) (code int, continued bool, message string, err error) {
@@ -205,7 +217,7 @@ func parseCodeLine(line string, expectCode int) (code int, continued bool, messa
 	if 1 <= expectCode && expectCode < 10 && code/100 != expectCode ||
 		10 <= expectCode && expectCode < 100 && code/10 != expectCode ||
 		100 <= expectCode && expectCode < 1000 && code != expectCode {
-		err = &textproto.Error{code, message}
+		err = &textproto.Error{Code: code, Msg: message}
 	}
 	return
 }
@@ -281,7 +293,7 @@ func (r *Reader) ReadResponse(expectCode int) (code int, message string, err err
 	}
 	if err != nil && multi && message != "" {
 		// replace one line error message with all lines (full message)
-		err = &textproto.Error{code, message}
+		err = &textproto.Error{Code: code, Msg: message}
 	}
 	return
 }
@@ -366,7 +378,7 @@ func (d *dotReader) Read(b []byte) (n int, err error) {
 			}
 			// Not part of .\r\n.
 			// Consume leading dot and emit saved \r.
-			br.UnreadByte()
+			_ = br.UnreadByte()
 			c = '\r'
 			d.state = stateData
 
@@ -376,7 +388,7 @@ func (d *dotReader) Read(b []byte) (n int, err error) {
 				break
 			}
 			// Not part of \r\n. Emit saved \r
-			br.UnreadByte()
+			_ = br.UnreadByte()
 			c = '\r'
 			d.state = stateData
 
@@ -411,7 +423,7 @@ func (r *Reader) closeDot() {
 	for r.dot != nil {
 		// When Read reaches EOF or an error,
 		// it will set r.dot == nil.
-		r.dot.Read(buf)
+		_, _ = r.dot.Read(buf)
 	}
 }
 
@@ -474,7 +486,7 @@ func (r *Reader) ReadDotLines() ([]string, error) {
 //		"Long-Key": {"Even Longer Value"},
 //	}
 //
-func (r *Reader) ReadMIMEHeader() (textproto.MIMEHeader, error) {
+func (r *Reader) ReadMIMEHeader() (MIMEHeader, OrigHeader, error) {
 	// Avoid lots of small slice allocations later by allocating one
 	// large one ahead of time which we'll cut up into smaller
 	// slices. If this isn't big enough later, we allocate small ones.
@@ -484,21 +496,22 @@ func (r *Reader) ReadMIMEHeader() (textproto.MIMEHeader, error) {
 		strs = make([]string, hint)
 	}
 
-	m := make(textproto.MIMEHeader, hint)
+	m := make(MIMEHeader, hint)
+	om := make(OrigHeader, hint)
 
 	// The first line cannot start with a leading space.
 	if buf, err := r.R.Peek(1); err == nil && (buf[0] == ' ' || buf[0] == '\t') {
 		line, err := r.readLineSlice()
 		if err != nil {
-			return m, err
+			return m, om, err
 		}
-		return m, textproto.ProtocolError("malformed MIME header initial line: " + string(line))
+		return m, om, textproto.ProtocolError("malformed MIME header initial line: " + string(line))
 	}
 
 	for {
-		kv, err := r.readContinuedLineSlice()
+		kv, okv, err := r.readContinuedLineSlice()
 		if len(kv) == 0 {
-			return m, err
+			return m, om, err
 		}
 
 		// Key ends at first colon; should not have trailing spaces
@@ -506,13 +519,17 @@ func (r *Reader) ReadMIMEHeader() (textproto.MIMEHeader, error) {
 		// them if present.
 		i := bytes.IndexByte(kv, ':')
 		if i < 0 {
-			return m, textproto.ProtocolError("malformed MIME header line: " + string(kv))
+			return m, om, textproto.ProtocolError("malformed MIME header line: " + string(kv))
 		}
 		endKey := i
 		for endKey > 0 && kv[endKey-1] == ' ' {
 			endKey--
 		}
+
+		buf := make([]byte, endKey)
+		copy(buf, kv[:endKey])
 		key := canonicalMIMEHeaderKey(kv[:endKey])
+		okey := string(buf)
 
 		// As per RFC 7230 field-name is a token, tokens consist of one or more chars.
 		// We could return a ProtocolError here, but better to be liberal in what we
@@ -541,8 +558,22 @@ func (r *Reader) ReadMIMEHeader() (textproto.MIMEHeader, error) {
 			m[key] = append(vv, value)
 		}
 
+		ovalue := string(okv[bytes.IndexByte(okv, ':')+1:])
+		vv = om[okey]
+		if vv == nil && len(strs) > 0 {
+			// More than likely this will be a single-element key.
+			// Most headers aren't multi-valued.
+			// Set the capacity on strs[0] to 1, so any future append
+			// won't extend the slice into the other strings.
+			vv, strs = strs[:1:1], strs[1:]
+			vv[0] = ovalue
+			om[okey] = vv
+		} else {
+			om[okey] = append(vv, ovalue)
+		}
+
 		if err != nil {
-			return m, err
+			return m, om, err
 		}
 	}
 }
@@ -551,7 +582,7 @@ func (r *Reader) ReadMIMEHeader() (textproto.MIMEHeader, error) {
 // that will be in this header. If it gets confused, it returns 0.
 func (r *Reader) upcomingHeaderNewlines() (n int) {
 	// Try to determine the 'hint' size.
-	r.R.Peek(1) // force a buffer load if empty
+	_, _ = r.R.Peek(1) // force a buffer load if empty
 	s := r.R.Buffered()
 	if s == 0 {
 		return

@@ -9,15 +9,18 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"hash"
 	"io"
 	"net"
-	"net/mail"
-	"net/textproto"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/redsift/dkim/textproto"
+
+	"github.com/redsift/dkim/mail"
 )
 
 // Result holds all details about result of DKIM signature verification
@@ -870,7 +873,8 @@ func (s *Signature) verify(m *mail.Message, options ...VerifyOption) (result *Re
 
 	// 5.4.2.  Signatures Involving Multiple Instances of a Field
 	// https://tools.ietf.org/html/rfc6376#section-5.4.2
-	getHeader := getHeaderFunc(m.Header)
+	//getHeader := getHeaderFunc(m.Header, textproto.CanonicalMIMEHeaderKey)
+	getHeader := getHeaderFunc(m.OrigHeader, func(s string) string { return s })
 
 	s.algorithm.Reset()
 	w := s.algorithm
@@ -879,6 +883,7 @@ func (s *Signature) verify(m *mail.Message, options ...VerifyOption) (result *Re
 		if !found {
 			continue
 		}
+		fmt.Printf("%s%s", string(canonicalizedHeader(k, v, s.RelaxedHeader)), string(crlf))
 		_, _ = w.Write(canonicalizedHeader(k, v, s.RelaxedHeader))
 		_, _ = w.Write(crlf)
 	}
@@ -890,10 +895,10 @@ func (s *Signature) verify(m *mail.Message, options ...VerifyOption) (result *Re
 	return newResult(Pass, nil, s, pkey)
 }
 
-func getHeaderFunc(h mail.Header) func(k string) (string, bool) {
+func getHeaderFunc(h map[string][]string, keyFunc func(string) string) func(k string) (string, bool) {
 	i := make(map[string]int, len(h))
 	return func(key string) (string, bool) {
-		k := textproto.CanonicalMIMEHeaderKey(key)
+		k := keyFunc(key)
 		var (
 			a     []string
 			found bool
@@ -960,28 +965,27 @@ func canonicalizedHeader(k, v string, relaxed bool) []byte {
 
 // Verify extracts DKIM signature from message, verifies it and returns Result
 // of verification in accordance with RFC6376 (DKIM Signatures)
-func Verify(hdr string, headers mail.Header, body io.Reader, opts ...VerifyOption) ([]*Result, error) {
-	if headers == nil || body == nil {
+func Verify(hdr string, headers mail.Header, body io.ReadSeeker, opts ...VerifyOption) ([]*Result, error) {
+	if headers.MIME == nil || body == nil {
 		return []*Result{{Result: None}}, nil
 	}
 
-	b := new(bytes.Buffer)
-	if _, err := b.ReadFrom(body); err != nil {
-		return nil, err
-	}
-
-	sigs := headers[textproto.CanonicalMIMEHeaderKey(hdr)]
+	sigs := headers.MIME[textproto.CanonicalMIMEHeaderKey(hdr)]
 
 	now := time.Now().UTC()
 
 	results := make([]*Result, 0, len(sigs))
 	for i, raw := range sigs {
-		msg := &mail.Message{Header: headers, Body: bytes.NewReader(b.Bytes())}
 		var r *Result
-		if s, err := parseSignature(hdr, raw); err != nil {
-			r = newResult(Permerror, err, s, nil)
+		if _, err := body.Seek(0, io.SeekStart); err != nil {
+			r = &Result{Result: Temperror, Error: &VerificationError{Err: err, Explanation: "internal error (seek to 0 failed)"}}
 		} else {
-			r = s.verify(msg, opts...)
+			msg := mail.NewMessage(headers, body)
+			if s, err := parseSignature(hdr, raw); err != nil {
+				r = newResult(Permerror, err, s, nil)
+			} else {
+				r = s.verify(msg, opts...)
+			}
 		}
 		r.Order = i
 		r.Timestamp = now
