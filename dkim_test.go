@@ -1,7 +1,6 @@
 package dkim
 
 import (
-	"bytes"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -10,10 +9,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/redsift/dkim/textproto"
-
-	"github.com/redsift/dkim/mail"
 
 	"github.com/google/go-cmp/cmp"
 )
@@ -28,6 +23,7 @@ var cache = map[string]*cacheEntry{
 	`highgrade._domainkey.guerrillamail.com`: {s: `v=DKIM1; h=sha256; k=rsa; s=email; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAxp5MZYH1xvKFqy8nt87DzhbagNQ00zY2hp7S/UZN8mjUwhwqh2yTsV+yMSqP6q72D6/1ZSMyRNS3n3jnPbA8pHlJmHxsDJOVeuVGHemjSlLk5HNto73fDnr1TEyLEx3cqPUNn0CRYltSjwnx9xJmRY3htX8CCapiE5hDhu0yWOw3FqKUnADlKuzJCL7xOkWXHXffKJGCrA/3HxJkaeg0ghPxhVfRv04ex0jTy9knWqDfpsftp1sxbBtmdSowaxGunfly6Vcb+N4EFcnyCrzFjfy/WUNrnVuLvRGUUHXHhujVXzpR1cD6cNJowRDyyF8nhJvr+0w3eGV8TXx6FKsuAwIDAQAB`},
 	`20130820._domainkey.1e100.net`:          {s: `k=rsa; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAnOv6+Txyz+SEc7mT719QQtOj6g2MjpErYUGVrRGGc7f5rmE1cRP1lhwx8PVoHOiuRzyok7IqjvAub9kk9fBoE9uXJB1QaRdMnKz7W/UhWemK5TEUgW1xT5qtBfUIpFRL34h6FbHbeysb4szi7aTgerxI15o73cP5BoPVkQj4BQKkfTQYGNH03J5Db9uMqW/NNJ8fKCLKWO5C1e+NQ1lD6uwFCjJ6PWFmAIeUu9+LfYW89Tz1NnwtSkFC96Oky1cmnlBf4dhZ/Up/FMZmB9l7TA6gLEu6JijlDrNmx1o50WADPjjN4rGELLt3VuXn09y2piBPlZPU2SIiDQC0qX0JWQIDAQAB`},
 	`20161025._domainkey.1e100.net`:          {s: `k=rsa; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAuoesoDYpDnaUGZFoCElFKAkhbPoqBCfkmz3LqSfdAkye2DpoxlBx+qybWdYXe55mCWPeVUIk10Z/H9uriY4enbpmUM0t3mhgyrxuKwJtFg0YgQ0WGpMKecYjhYkt+pcHy7J11BrYh6lHx7mXf5SxuoOF1B6rG1MTzgBKDQqHsBvfz9xZSsNA5HW41EHu4dxRz/QLvzJYegLac8p6oU7l8O/yaVAse0DpgkVu+adfDV+flDq+nohyt2CJ+XHHdbIpE3cb01wp4Znz05zcYaTJd6WIQuis9sjGpS8sDEhY2gZkJVE2jvk1/mObTsyJuVuORapZnXO740owXe8Pvxq7uQIDAQAB`},
+	`mail._domainkey.parkanyi.eu`:            {s: `v=DKIM1; h=sha256; k=rsa; s=email; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAt5j5tt9IUww9mdMgbuI2DCHJy0RJlOZEFQrYF8KLRfgYVi9YVSz4cUGU0c7o8Rv31hs6diz4vIO49fTL8uS84guObkI361RBwwN37Ci1q6lf9NVirDi+KjlX//7JjRgkz4arPY3FlkNi53x1VnnbuHF6C/8B2YdDVs335iriWIXLCdIhpZa2uoxeYYtvvqg3/7MgB94ZMtluZxollav/zB1dQTpAmjGQeH35eXb+L2uc6c05jr/VNFdU8Rf7ucGNMcv/aLc0/ri6JJrPEJnahYO42SsPtc29HfZSiWI/l55k0A1sFgAEIxM+GF57AVDZo3dN+JENFjrFRJ4otHUd9wIDAQAB`},
 }
 
 func CachedPublicKeyQuery(s *Signature) (*PublicKey, error) {
@@ -292,7 +288,7 @@ func TestParseSignature_Valid(t *testing.T) {
 			continue
 		}
 		t.Run(fmt.Sprintf("%d_%s", testNo, test.name), func(t *testing.T) {
-			got, err := parseSignature("DKIM-Signature", test.raw)
+			got, err := parseSignature("DKIM-Signature", test.raw, test.raw)
 			if test.wantErr != (err != nil) {
 				t.Errorf("parseSignature() err=%v, wantErr=%t", err, test.wantErr)
 			}
@@ -350,7 +346,7 @@ func TestParseSignature_Errors(t *testing.T) {
 			continue
 		}
 		t.Run(fmt.Sprintf("%d", testNo), func(t *testing.T) {
-			_, got := parseSignature("DKIM-Signature", test.raw)
+			_, got := parseSignature("DKIM-Signature", test.raw, test.raw)
 			if !reflect.DeepEqual(got, test.want) {
 				t.Errorf("parseSignature()\n\tgot =\"%#v\"\n\twant=\"%#v\"", got, test.want)
 			}
@@ -389,13 +385,16 @@ func TestVerify(t *testing.T) {
 		//{"_samples/s008.eml", false, []result{{0, None, false, nil}}},
 		//{"_samples/s009.eml", false, []result{{0, None, false, nil}}},
 		//{"_samples/s010.eml", false, []result{{0, None, false, nil}}},
-		////{"_samples/_case161751693.eml", false, []result{{0, Pass, false, nil}}},                                               // TODO: prepare synthetic test for OverSigned header with empty Subject (or other) header
-		////{"_samples/_case160015800.eml", false, []result{{0, Pass, false, nil}}},                                               // TODO: prepare synthetic test for OverSigned header
-		////{"_samples/_case161455451.eml", false, []result{{0, Pass, false, nil}, {1, Pass, false, nil}, {2, Pass, false, nil}}}, // TODO: prepare synthetic test for multiple DKIM-Signature headers
-		////{"_samples/_case20181126.eml", false, []result{{0, Pass, false, nil}}},
-		////{"_samples/_local/inbox-debug-4", false, []result{{0, Pass, false, nil}}},
+		//////{"_samples/_case161751693.eml", false, []result{{0, Pass, false, nil}}},                                               // TODO: prepare synthetic test for OverSigned header with empty Subject (or other) header
+		//////{"_samples/_case160015800.eml", false, []result{{0, Pass, false, nil}}},                                               // TODO: prepare synthetic test for OverSigned header
+		//////{"_samples/_case161455451.eml", false, []result{{0, Pass, false, nil}, {1, Pass, false, nil}, {2, Pass, false, nil}}}, // TODO: prepare synthetic test for multiple DKIM-Signature headers
+		//////{"_samples/_case20181126.eml", false, []result{{0, Pass, false, nil}}},
+		//////{"_samples/_local/inbox-debug-4", false, []result{{0, Pass, false, nil}}},
 		//{"_samples/_case20190110.eml", false, []result{{0, Pass, false, nil}}}, // TODO: prepare synthetic test for c=simple/simple
-		{"_samples/_case20190211.eml", false, []result{{0, Pass, false, nil}}},
+		//{"_samples/_case20190211.eml", false, []result{{0, Pass, false, nil}}},
+		{"_samples/_simple-simple.eml", false, []result{{0, Pass, false, nil}}},
+		{"_samples/_simple-relaxed.eml", false, []result{{0, Pass, false, nil}}},
+		{"_samples/_relaxed-relaxed.eml", false, []result{{0, Pass, false, nil}}},
 	}
 	for _, test := range tests {
 		t.Run(test.file, func(t *testing.T) {
@@ -404,17 +403,17 @@ func TestVerify(t *testing.T) {
 
 			var (
 				b, _ = ioutil.ReadAll(f)
-				h    mail.Header
+				m    *Message
 				e    error
 			)
-			h, b, e = mail.ParseMessage(string(b))
+			m, e = ParseMessage(string(b))
 			switch e {
 			case nil:
 			case io.EOF:
 			default:
 				t.Fatalf("can't read file: %v", e)
 			}
-			got, err := Verify("DKIM-Signature", h, bytes.NewReader(b))
+			got, err := Verify("DKIM-Signature", m)
 
 			if test.wantErr == (err == nil) {
 				t.Errorf("Verify() err=%v,wantErr=%t", err, test.wantErr)
@@ -426,7 +425,7 @@ func TestVerify(t *testing.T) {
 			}
 
 			if diff := cmp.Diff(test.want, results, cmp.Comparer(cmpVerificationErrors)); diff != "" {
-				t.Errorf("Verify() results differs: (-want +got)\n%s", diff)
+				t.Errorf("Verify() results differ: (-want +got)\n%s", diff)
 			}
 		})
 	}
@@ -558,59 +557,115 @@ func TestResultString(t *testing.T) {
 
 func TestGetHeaderFunc(t *testing.T) {
 	type result struct {
+		key   string
 		value string
 		found bool
 	}
-	samples := []struct {
-		header textproto.OrigHeader
-		keys   []string
-		want   []result
+	tests := []struct {
+		name    string
+		header  MIMEHeader
+		relaxed bool
+		keys    []string
+		want    []result
 	}{
 		{
-			header: textproto.OrigHeader(map[string][]string{
-				"From": {"from-0"},
-			}),
-			keys: []string{"from"},
-			want: []result{{"from-0", true}},
+			name: "relaxed,1x1",
+			header: MIMEHeader{
+				"From": {{"from", "orig-0", "fold-0"}}},
+			relaxed: true,
+			keys:    []string{"from"},
+			want:    []result{{"from", "fold-0", true}},
 		},
 		{
-			header: textproto.OrigHeader(map[string][]string{
-				"From": {"from-0", "from-1"},
-			}),
-			keys: []string{"from", "from"},
-			want: []result{{"from-1", true}, {"from-0", true}},
+			name: "relaxed,2x1",
+			header: MIMEHeader{
+				"From": {
+					{"froM", "orig-0", "fold-0"},
+					{"FROM", "orig-1", "fold-1"}}},
+			relaxed: true,
+			keys:    []string{"from", "FROM"},
+			want:    []result{{"FROM", "fold-1", true}, {"froM", "fold-0", true}},
 		},
 		{
-			header: textproto.OrigHeader(map[string][]string{
-				"From": {"from-0"},
-			}),
-			keys: []string{"from", "from"},
-			want: []result{{"from-0", true}, {"", false}},
+			name: "relaxed,1x2",
+			header: MIMEHeader{
+				"From": {{"from", "orig-0", "fold-0"}}},
+			relaxed: true,
+			keys:    []string{"from", "From"},
+			want:    []result{{"from", "fold-0", true}, {"", "", false}},
 		},
 		{
-			header: textproto.OrigHeader(map[string][]string{
-				"From": {},
-			}),
-			keys: []string{"from", "from"},
-			want: []result{{"", true}, {"", false}},
+			name: "relaxed,0x2",
+			header: MIMEHeader{
+				"From": {}},
+			relaxed: true,
+			keys:    []string{"from", "FROM"},
+			want:    []result{{"From", "", true}, {"", "", false}},
 		},
 		{
-			keys: []string{"from", "from"},
-			want: []result{{"", false}, {"", false}},
+			name:    "relaxed,_x2",
+			relaxed: true,
+			keys:    []string{"from", "from"},
+			want:    []result{{"", "", false}, {"", "", false}},
+		},
+		{
+			name: "simple,1x1",
+			header: MIMEHeader{
+				"From": {{"From", "orig-0", "fold-0"}}},
+			relaxed: false,
+			keys:    []string{"from"},
+			want:    []result{{"From", "orig-0", true}},
+		},
+		{
+			name: "simple,2x1",
+			header: MIMEHeader{
+				"From": {
+					{"From", "orig-0", "fold-0"},
+					{"From", "orig-1", "fold-1"}}},
+			relaxed: false,
+			keys:    []string{"from", "from"},
+			want:    []result{{"From", "orig-1", true}, {"From", "orig-0", true}},
+		},
+		{
+			name: "simple,1x2",
+			header: MIMEHeader{
+				"From": {{"From", "orig-0", "fold-0"}}},
+			relaxed: false,
+			keys:    []string{"from", "from"},
+			want:    []result{{"From", "orig-0", true}, {"", "", false}},
+		},
+		{
+			name: "simple,0x2",
+			header: MIMEHeader{
+				"From": {}},
+			relaxed: false,
+			keys:    []string{"from", "from"},
+			want:    []result{{"From", "", true}, {"", "", false}},
+		},
+		{
+			name:    "simple,_x2",
+			relaxed: false,
+			keys:    []string{"from", "from"},
+			want:    []result{{"", "", false}, {"", "", false}},
 		},
 	}
 
-	for i, s := range samples {
-		getHeader := getHeaderFunc(s.header, textproto.CanonicalMIMEHeaderKey)
-		for j := range s.keys {
-			v, found := getHeader(s.keys[j])
-			if found != s.want[j].found {
-				t.Errorf("#%d.%d (%s) found=%t, want %t", i, j, s.keys[j], found, s.want[j].found)
+	for i, test := range tests {
+		t.Run(fmt.Sprintf("%d/%s", i, test.name), func(t *testing.T) {
+			getHeader := getHeaderFunc(test.header, test.relaxed)
+			for j := range test.keys {
+				k, v, found := getHeader(test.keys[j])
+				if k != test.want[j].key {
+					t.Errorf("getHeaderFunc(%q) k=`%s`, want `%s`", test.keys[j], k, test.want[j].key)
+				}
+				if found != test.want[j].found {
+					t.Errorf("getHeaderFunc(%q) found=%t, want %t", test.keys[j], found, test.want[j].found)
+				}
+				if v != test.want[j].value {
+					t.Errorf("getHeaderFunc(%q) v=`%s`, want `%s`", test.keys[j], v, test.want[j].value)
+				}
 			}
-			if v != s.want[j].value {
-				t.Errorf("#%d.%d (%s) v=`%s`, want `%s`", i, j, s.keys[j], v, s.want[j].value)
-			}
-		}
+		})
 	}
 }
 
@@ -652,14 +707,14 @@ func TestVerify_Concurrent(t *testing.T) {
 
 			var (
 				b, _ = ioutil.ReadAll(r)
-				h    mail.Header
+				m    *Message
 			)
-			h, b, err = mail.ParseMessage(string(b))
+			m, err = ParseMessage(string(b))
 			if err != nil {
 				t.Errorf("error reading message %s", err)
 			}
 
-			_, _ = Verify("DKIM-Signature", h, bytes.NewReader(b),
+			_, _ = Verify("DKIM-Signature", m,
 				InvalidSigningEntityOption("com", "co.uk", "org", "net", "io", "uk"),
 				SignatureTimingOption(5*time.Minute),
 			)
