@@ -375,26 +375,22 @@ func TestVerify(t *testing.T) {
 		wantErr bool
 		want    []result
 	}{
-		//{"_samples/s001.eml", false, []result{{0, Pass, false, nil}}},
-		//{"_samples/s002.eml", false, []result{{0, Pass, false, nil}}},
-		//{"_samples/s003.eml", false, []result{{0, Pass, false, nil}}},
-		//{"_samples/s004.eml", false, []result{{0, Pass, false, nil}}},
-		//{"_samples/s005.eml", false, []result{{0, Fail, true, &VerificationError{Err: ErrBadSignature, Explanation: "body hash mismatched", Tag: "bh"}}}},
-		//{"_samples/s006.eml", false, []result{{0, Fail, true, &VerificationError{Err: ErrBadSignature, Explanation: "body hash mismatched", Tag: "bh"}}}},
-		//{"_samples/s007.eml", false, []result{{0, Fail, true, &VerificationError{Err: ErrBadSignature, Explanation: "crypto/rsa: verification error", Tag: "b"}}}},
-		//{"_samples/s008.eml", false, []result{{0, None, false, nil}}},
-		//{"_samples/s009.eml", false, []result{{0, None, false, nil}}},
-		//{"_samples/s010.eml", false, []result{{0, None, false, nil}}},
-		//////{"_samples/_case161751693.eml", false, []result{{0, Pass, false, nil}}},                                               // TODO: prepare synthetic test for OverSigned header with empty Subject (or other) header
-		//////{"_samples/_case160015800.eml", false, []result{{0, Pass, false, nil}}},                                               // TODO: prepare synthetic test for OverSigned header
-		//////{"_samples/_case161455451.eml", false, []result{{0, Pass, false, nil}, {1, Pass, false, nil}, {2, Pass, false, nil}}}, // TODO: prepare synthetic test for multiple DKIM-Signature headers
-		//////{"_samples/_case20181126.eml", false, []result{{0, Pass, false, nil}}},
-		//////{"_samples/_local/inbox-debug-4", false, []result{{0, Pass, false, nil}}},
-		//{"_samples/_case20190110.eml", false, []result{{0, Pass, false, nil}}}, // TODO: prepare synthetic test for c=simple/simple
-		//{"_samples/_case20190211.eml", false, []result{{0, Pass, false, nil}}},
-		{"_samples/_simple-simple.eml", false, []result{{0, Pass, false, nil}}},
-		{"_samples/_simple-relaxed.eml", false, []result{{0, Pass, false, nil}}},
-		{"_samples/_relaxed-relaxed.eml", false, []result{{0, Pass, false, nil}}},
+		{"_samples/s001.eml", false, []result{{0, Pass, false, nil}}},
+		{"_samples/s002.eml", false, []result{{0, Pass, false, nil}}},
+		{"_samples/s003.eml", false, []result{{0, Pass, false, nil}}},
+		{"_samples/s004.eml", false, []result{{0, Pass, false, nil}}},
+		{"_samples/s005.eml", false, []result{{0, Fail, true, &VerificationError{Err: ErrBadSignature, Explanation: "body hash mismatched", Tag: "bh"}}}},
+		{"_samples/s006.eml", false, []result{{0, Fail, true, &VerificationError{Err: ErrBadSignature, Explanation: "body hash mismatched", Tag: "bh"}}}},
+		{"_samples/s007.eml", false, []result{{0, Fail, true, &VerificationError{Err: ErrBadSignature, Explanation: "crypto/rsa: verification error", Tag: "b"}}}},
+		{"_samples/s008.eml", false, []result{{0, None, false, nil}}},
+		{"_samples/s009.eml", false, []result{{0, None, false, nil}}},
+		{"_samples/s010.eml", false, []result{{0, None, false, nil}}},
+		{"_samples/case161751693.eml", false, []result{{0, Pass, false, nil}}},                                               // OverSigned header with empty Subject (or other) header
+		{"_samples/case160015800.eml", false, []result{{0, Pass, false, nil}}},                                               // OverSigned header
+		{"_samples/case161455451.eml", false, []result{{0, Pass, false, nil}, {1, Pass, false, nil}, {2, Pass, false, nil}}}, // Multiple DKIM-Signature headers
+		{"_samples/simple-simple.eml", false, []result{{0, Pass, false, nil}}},
+		{"_samples/simple-relaxed.eml", false, []result{{0, Pass, false, nil}}},
+		{"_samples/relaxed-relaxed.eml", false, []result{{0, Pass, false, nil}}},
 	}
 	for _, test := range tests {
 		t.Run(test.file, func(t *testing.T) {

@@ -12,7 +12,6 @@ import (
 	"hash"
 	"io"
 	"net"
-	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -877,9 +876,9 @@ func (s *Signature) verify(m *Message, options ...VerifyOption) (result *Result)
 	getHeader := getHeaderFunc(m.Header, s.RelaxedHeader)
 
 	s.algorithm.Reset()
-	//w := s.algorithm
-	w := io.MultiWriter(s.algorithm, os.Stderr)
-	os.Stderr.WriteString(">>>")
+	w := s.algorithm
+	//w := io.MultiWriter(s.algorithm, os.Stderr)
+	//os.Stderr.WriteString(">>>")
 	for _, k := range s.Headers {
 		origK, v, found := getHeader(k)
 		if !found {
@@ -889,7 +888,7 @@ func (s *Signature) verify(m *Message, options ...VerifyOption) (result *Result)
 		_, _ = w.Write(crlf)
 	}
 	_, _ = w.Write(canonicalizedHeader(s.Header, s.emptyHashValue, s.RelaxedHeader))
-	os.Stderr.WriteString("<<<\n")
+	//os.Stderr.WriteString("<<<\n")
 	hashed := s.algorithm.Sum(nil)
 	if err := rsa.VerifyPKCS1v15(pkey.key, crypto.Hash(s.AlgorithmID), hashed[:], s.Hash); err != nil {
 		return newResult(Fail, wrapErr(ErrBadSignature, err.Error(), "b"), s, pkey)
@@ -945,9 +944,12 @@ func canonicalizedHeader(k, v string, relaxed bool) []byte {
 	//   case folded and whitespace MUST NOT be changed.
 	if !relaxed {
 		h := make([]byte, 0, len(k)+len(v)+1)
+		// As per https://tools.ietf.org/html/rfc5322#section-2.2
+		// technically we should sanitize the k as well as v (see below), but we never saw folded headers
 		h = append(h, []byte(k)...)
 		h = append(h, colon...)
-		h = append(h, []byte(v)...)
+		// replace all LF with CRLF in case v came from source different then SMTP
+		h = append(h, bytes.Replace([]byte(v), []byte("\n"), crlf, -1)...)
 		return h
 	}
 	// 3.4.2.  The "relaxed" Header Canonicalization Algorithm
@@ -972,7 +974,7 @@ func canonicalizedHeader(k, v string, relaxed bool) []byte {
 	//   o  Delete any WSP characters remaining before and after the colon
 	//      separating the header field name from the header field value.  The
 	//      colon separator MUST be retained.
-	b := bytes.TrimRight(reUnfoldAndReduceWS.ReplaceAll([]byte(v), sp), wsp)
+	b := trim(reUnfoldAndReduceWS.ReplaceAll([]byte(v), sp))
 	h := make([]byte, 0, len(k)+len(b)+1)
 	h = append(h, []byte(strings.ToLower(k))...)
 	h = append(h, colon...)
