@@ -12,8 +12,6 @@ import (
 	"hash"
 	"io"
 	"net"
-	"net/mail"
-	"net/textproto"
 	"regexp"
 	"strconv"
 	"strings"
@@ -230,9 +228,9 @@ type Signature struct {
 
 // PublicKey holds parsed public key
 type PublicKey struct {
-	Raw        string   `json:"raw, omitempty"`       // raw value of the key record
-	Version    string   `json:"version, omitempty"`   // 'v' tag value
-	Data       []byte   `json:"key, omitempty"`       // 'p' tag value
+	Raw        string   `json:"raw,omitempty"`        // raw value of the key record
+	Version    string   `json:"version,omitempty"`    // 'v' tag value
+	Data       []byte   `json:"key,omitempty"`        // 'p' tag value
 	Algorithms []string `json:"algorithms,omitempty"` // parsed 'h' tag value; [] means "allowing all"
 	Services   []string `json:"services,omitempty"`   // parsed 's' tag value; [] is "*"
 	Flags      []string `json:"flags,omitempty"`      // parsed 't' tag value
@@ -275,7 +273,6 @@ var (
 	reKeyXTag       = regexp.MustCompile(`:?\s*([[:alnum:]](?:[[:alnum:]-]*[[:alnum:]])?)\s*`)
 	reKeySTag       = regexp.MustCompile(`:?\s*([[:alnum:]*](?:[[:alnum:]-]*[[:alnum:]])?)?\s*`)
 	reSignedHeaders = regexp.MustCompile(`:?\s*([^[:cntrl:]: ]+)\s*`)
-	timeZero        = time.Unix(0, 0)
 	algorithms      = map[string]*algorithm{
 		"rsa-sha1":   {crypto.SHA1, crypto.SHA1.New},
 		"rsa-sha256": {crypto.SHA256, crypto.SHA256.New},
@@ -304,8 +301,8 @@ func decodeBase64(s string) ([]byte, error) {
 	return base64.StdEncoding.DecodeString(strings.Replace(s, " ", "", -1))
 }
 
-func parseSignature(k, v string) (*Signature, *VerificationError) {
-	if v == "" {
+func parseSignature(k, folded, original string) (*Signature, *VerificationError) {
+	if folded == "" || original == "" {
 		return nil, &VerificationError{Source: VerifyError, Err: ErrSignatureNotFound}
 	}
 
@@ -341,13 +338,13 @@ func parseSignature(k, v string) (*Signature, *VerificationError) {
 	s := &Signature{
 		query:  Queries[qDNSTxt],
 		Header: k,
-		Raw:    v,
+		Raw:    original,
 		// The DKIM-Signature Header field that exists (verifying) or will
 		// be inserted (signing) in the message, with the value of the "b="
 		// tag (including all surrounding whitespace) deleted
 		// (i.e., treated as the empty string)
 		// https://tools.ietf.org/html/rfc6376#page-30
-		emptyHashValue: reBTagOnly.ReplaceAllString(v, "$1"),
+		emptyHashValue: reBTagOnly.ReplaceAllString(original, "$1"),
 	}
 
 	badSignature := func(t, v string, exp string) (*Signature, *VerificationError) {
@@ -360,7 +357,7 @@ func parseSignature(k, v string) (*Signature, *VerificationError) {
 		}
 	}
 
-	for _, m := range reTagValueList.FindAllStringSubmatch(v, -1) {
+	for _, m := range reTagValueList.FindAllStringSubmatch(folded, -1) {
 		// m := ["t=v" "t" "v"]
 		key, value := m[1], m[2]
 		var err error
@@ -505,7 +502,7 @@ func (c *counterWriter) Write(p []byte) (n int, err error) {
 }
 
 func bodyHash(in io.Reader, h hash.Hash, relaxed bool) ([]byte, error) {
-	r := textproto.NewReader(bufio.NewReader(in))
+	r := NewReader(bufio.NewReader(in))
 	h.Reset()
 	w := &counterWriter{w: h}
 
@@ -552,14 +549,14 @@ func bodyHash(in io.Reader, h hash.Hash, relaxed bool) ([]byte, error) {
 // the signature does not sign Header fields that the Verifier views to be
 // essential.  As a case in point, if MIME Header fields are not signed,
 // certain attacks may be possible that the Verifier would prefer to avoid.
-type VerifyOption func(s *Signature, k *PublicKey, m *mail.Message) (ResultCode, error)
+type VerifyOption func(s *Signature, k *PublicKey, m *Message) (ResultCode, error)
 
 // SignatureTimingOption checks if signature is expired
 // Verifiers MAY ignore the DKIM-Signature Header field and return
 // PERMFAIL (signature expired) if it contains an "x=" tag and
 // the signature has expired.
 func SignatureTimingOption(drift time.Duration) VerifyOption {
-	return func(s *Signature, _ *PublicKey, _ *mail.Message) (ResultCode, error) {
+	return func(s *Signature, _ *PublicKey, _ *Message) (ResultCode, error) {
 		now := time.Now().UTC()
 		if s.Timestamp.After(now.Add(drift)) {
 			return Permerror, ErrTimestampInFuture
@@ -585,7 +582,7 @@ func InvalidSigningEntityOption(domains ...string) VerifyOption {
 	for _, d := range domains {
 		index[d] = struct{}{}
 	}
-	return func(s *Signature, _ *PublicKey, _ *mail.Message) (ResultCode, error) {
+	return func(s *Signature, _ *PublicKey, _ *Message) (ResultCode, error) {
 		if _, found := index[s.SignerDomain]; found {
 			return Permerror, ErrInvalidSigningEntity
 		}
@@ -760,7 +757,12 @@ func parsePublicKey(s string) (*PublicKey, error) {
 	return k, nil
 }
 
-func (s *Signature) verifyBodyHash(r io.Reader) (ResultCode, error) {
+func (s *Signature) verifyBodyHash(rs io.ReadSeeker) (ResultCode, error) {
+	defer func(offset int64, _ error) {
+		_, _ = rs.Seek(offset, io.SeekStart)
+	}(rs.Seek(0, io.SeekCurrent))
+
+	var r io.Reader = rs
 	// In Hash step 1, the Signer/Verifier MUST Hash the message body,
 	// canonicalized using the body canonicalization algorithm specified
 	// in the "c=" tag and then truncated to the Length specified in the "l=" tag.
@@ -806,7 +808,7 @@ func compareDomains(u, d string, strict bool) bool {
 	return strings.HasSuffix(u, d)
 }
 
-func (s *Signature) verify(m *mail.Message, options ...VerifyOption) (result *Result) {
+func (s *Signature) verify(m *Message, options ...VerifyOption) (result *Result) {
 	// TODO cache result
 	if s == nil {
 		return newResult(None, &VerificationError{Err: ErrSignatureNotFound}, s, nil)
@@ -871,63 +873,84 @@ func (s *Signature) verify(m *mail.Message, options ...VerifyOption) (result *Re
 
 	// 5.4.2.  Signatures Involving Multiple Instances of a Field
 	// https://tools.ietf.org/html/rfc6376#section-5.4.2
-	getHeader := getHeaderFunc(m.Header)
+	getHeader := getHeaderFunc(m.Header, s.RelaxedHeader)
 
 	s.algorithm.Reset()
 	w := s.algorithm
+	//w := io.MultiWriter(s.algorithm, os.Stderr)
+	//os.Stderr.WriteString(">>>")
 	for _, k := range s.Headers {
-		v, found := getHeader(k)
+		origK, v, found := getHeader(k)
 		if !found {
 			continue
 		}
-		_, _ = w.Write(canonicalizedHeader(k, v, s.RelaxedHeader))
+		_, _ = w.Write(canonicalizedHeader(origK, v, s.RelaxedHeader))
 		_, _ = w.Write(crlf)
 	}
 	_, _ = w.Write(canonicalizedHeader(s.Header, s.emptyHashValue, s.RelaxedHeader))
-	if err := rsa.VerifyPKCS1v15(pkey.key, crypto.Hash(s.AlgorithmID), s.algorithm.Sum(nil), s.Hash); err != nil {
+	//os.Stderr.WriteString("<<<\n")
+	hashed := s.algorithm.Sum(nil)
+	if err := rsa.VerifyPKCS1v15(pkey.key, crypto.Hash(s.AlgorithmID), hashed[:], s.Hash); err != nil {
 		return newResult(Fail, wrapErr(ErrBadSignature, err.Error(), "b"), s, pkey)
 	}
 
 	return newResult(Pass, nil, s, pkey)
 }
 
-func getHeaderFunc(h mail.Header) func(k string) (string, bool) {
+func getHeaderFunc(h MIMEHeader, relaxed bool) func(k string) (string, string, bool) {
 	i := make(map[string]int, len(h))
-	return func(key string) (string, bool) {
-		k := textproto.CanonicalMIMEHeaderKey(key)
+	return func(key string) (string, string, bool) {
+		k := CanonicalMIMEHeaderKey(key)
 		var (
-			a     []string
+			a     []KVPair
 			found bool
 			n     int
 		)
 		a, found = h[k]
 		if !found {
-			return "", false
+			return "", "", false
 		}
 		n, found = i[k]
 		if n < 0 {
-			return "", false
+			return "", "", false
 		}
 		if !found {
 			n = len(a) - 1
 		}
-		var v string
+		origK := k
+		v := ""
 		if n >= 0 {
-			v = a[n]
+			if relaxed {
+				v = a[n].Folded
+			} else {
+				v = a[n].Original
+			}
+			origK = a[n].Key
 		}
 		n--
 		i[k] = n
-		return v, true
+		return origK, v, true
 	}
 }
 
 func canonicalizedHeader(k, v string, relaxed bool) []byte {
+	// 3.4.1.  The "simple" Header Canonicalization Algorithm
+	// https://tools.ietf.org/html/rfc6376#section-3.4.1
+	//
+	//   The "simple" header canonicalization algorithm does not change header
+	//   fields in any way.  Header fields MUST be presented to the signing or
+	//   verification algorithm exactly as they are in the message being
+	//   signed or verified.  In particular, header field names MUST NOT be
+	//   case folded and whitespace MUST NOT be changed.
 	if !relaxed {
-		// NOTE: textproto.Reader#ReadMIMEHeader returns map of
-		// CanonicalMIMEHeaderKey(key) and make impossible
-		// "simple" canonicalization
-		// TODO raw Headers required
-		return []byte(k + `:` + v)
+		h := make([]byte, 0, len(k)+len(v)+1)
+		// As per https://tools.ietf.org/html/rfc5322#section-2.2
+		// technically we should sanitize the k as well as v (see below), but we never saw folded headers
+		h = append(h, []byte(k)...)
+		h = append(h, colon...)
+		// replace all LF with CRLF in case v came from source different then SMTP
+		h = append(h, bytes.Replace([]byte(v), []byte("\n"), crlf, -1)...)
+		return h
 	}
 	// 3.4.2.  The "relaxed" Header Canonicalization Algorithm
 	// https://tools.ietf.org/html/rfc6376#section-3.4.2
@@ -951,7 +974,7 @@ func canonicalizedHeader(k, v string, relaxed bool) []byte {
 	//   o  Delete any WSP characters remaining before and after the colon
 	//      separating the header field name from the header field value.  The
 	//      colon separator MUST be retained.
-	b := bytes.TrimRight(reUnfoldAndReduceWS.ReplaceAll([]byte(v), sp), wsp)
+	b := trim(reUnfoldAndReduceWS.ReplaceAll([]byte(v), sp))
 	h := make([]byte, 0, len(k)+len(b)+1)
 	h = append(h, []byte(strings.ToLower(k))...)
 	h = append(h, colon...)
@@ -961,28 +984,26 @@ func canonicalizedHeader(k, v string, relaxed bool) []byte {
 
 // Verify extracts DKIM signature from message, verifies it and returns Result
 // of verification in accordance with RFC6376 (DKIM Signatures)
-func Verify(hdr string, headers mail.Header, body io.Reader, opts ...VerifyOption) ([]*Result, error) {
-	if headers == nil || body == nil {
+func Verify(hdr string, msg *Message, opts ...VerifyOption) ([]*Result, error) {
+	if msg == nil || len(msg.Header) == 0 || msg.Body == nil {
 		return []*Result{{Result: None}}, nil
 	}
 
-	b := new(bytes.Buffer)
-	if _, err := b.ReadFrom(body); err != nil {
-		return nil, err
-	}
-
-	sigs := headers[textproto.CanonicalMIMEHeaderKey(hdr)]
+	sigs := msg.Header[CanonicalMIMEHeaderKey(hdr)]
 
 	now := time.Now().UTC()
 
 	results := make([]*Result, 0, len(sigs))
 	for i, raw := range sigs {
-		msg := &mail.Message{Header: headers, Body: bytes.NewReader(b.Bytes())}
 		var r *Result
-		if s, err := parseSignature(hdr, raw); err != nil {
-			r = newResult(Permerror, err, s, nil)
+		if _, err := msg.Body.Seek(0, io.SeekStart); err != nil {
+			r = &Result{Result: Temperror, Error: &VerificationError{Err: err, Explanation: "internal error (seek to 0 failed)"}}
 		} else {
-			r = s.verify(msg, opts...)
+			if s, err := parseSignature(hdr, raw.Folded, raw.Original); err != nil {
+				r = newResult(Permerror, err, s, nil)
+			} else {
+				r = s.verify(msg, opts...)
+			}
 		}
 		r.Order = i
 		r.Timestamp = now

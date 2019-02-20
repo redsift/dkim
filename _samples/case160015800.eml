@@ -1,0 +1,59 @@
+Delivered-To: dmitry@redsift.io
+Received: by 2002:a17:90a:290b:0:0:0:0 with SMTP id g11-v6csp2681133pjd;
+        Mon, 3 Sep 2018 08:43:10 -0700 (PDT)
+X-Google-Smtp-Source: ANB0VdaSVeSi4iYLwxOgdmksaP13dKHlHGF0iJahPyo+oEGQ9fGfvDAewh4dy0WIUYVAqMOcBv5P
+X-Received: by 2002:adf:a11c:: with SMTP id o28-v6mr20259538wro.169.1535989390323;
+        Mon, 03 Sep 2018 08:43:10 -0700 (PDT)
+ARC-Seal: i=1; a=rsa-sha256; t=1535989390; cv=none;
+        d=google.com; s=arc-20160816;
+        b=1GSnuPAYo6o7fEVeGNggqQlKGcbNcB/ESdgkxgZSNELJy5Bo7HUFOU5dabunhK1TmB
+         kYRD8xc2iTTJjJvxkpxfLd41nBRlkluhyXtdxuJa/jx45bM2d81Uqrpi7Y0FynB5HM4y
+         nOL+2KCifDF88be2eIzooktOWLtV3bikdIXQ6kh32TuHQWrxSoff/d4EhUWWhquP27Oc
+         Bq24lm3bnWBFlVmuA3RL2ssQzgzrBoEZqkd89eYOu7PAzyGX/VQNkoJBKxSqpK8JUsh3
+         7LcFqnDQavOcL6BBQT2Dvilb/FEmC8u35T/U4SSj1NNLs4Xs1RqWfczm+Q8HbfnJBSqi
+         SQ8w==
+ARC-Message-Signature: i=1; a=rsa-sha256; c=relaxed/relaxed; d=google.com; s=arc-20160816;
+        h=to:date:message-id:subject:mime-version:content-transfer-encoding
+         :dkim-signature:from:arc-authentication-results;
+        bh=4mBMlbb9RYAU7BwyoNH9dJAKqmX3kXz/ccahVeHHYaI=;
+        b=vsfqqpXMxkbg0MYPUZlQsskO8PITVqeIHkG4ZNA25Z6VS1HrviE/z+fWY3it/09fR+
+         tfJKrw4znGEQ0fTT8jn/TM6ZeEza/tVWjaVBRsujX98wo7PNVLvNf/EzPneX5FqeEkMF
+         kVYjg7f+b+klHCzUduOZDxdHufPv1mIJc3hAY+1UnkNgiADHdzTICHDAE1Nb4ddXZV9z
+         9yc8oZSslA+RYxQ7uK9OvwQ1hRJ5Awhs67w99EVsoj8VoZ9EW+a9DdxD4IuEyoPT+YLy
+         HzpCUkLbR6jp2Kl6xuescYt9PXNbaY2Vs8mBy7HKTb7FQJuQvzsqvOuyFX5pRf8FpAPz
+         Fx1A==
+ARC-Authentication-Results: i=1; mx.google.com;
+       dkim=pass header.i=@parkanyi.eu header.s=mail header.b=GgeRXrtl;
+       spf=pass (google.com: domain of peter@parkanyi.eu designates 88.151.99.234 as permitted sender) smtp.mailfrom=peter@parkanyi.eu
+Return-Path: <peter@parkanyi.eu>
+Received: from parkanyi.eu (parkanyi.eu. [88.151.99.234])
+        by mx.google.com with ESMTPS id t14-v6si9053821wmt.161.2018.09.03.08.43.09
+        for <dmitry@redsift.io>
+        (version=TLS1_2 cipher=ECDHE-RSA-CHACHA20-POLY1305 bits=256/256);
+        Mon, 03 Sep 2018 08:43:10 -0700 (PDT)
+Received-SPF: pass (google.com: domain of peter@parkanyi.eu designates 88.151.99.234 as permitted sender) client-ip=88.151.99.234;
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@parkanyi.eu header.s=mail header.b=GgeRXrtl;
+       spf=pass (google.com: domain of peter@parkanyi.eu designates 88.151.99.234 as permitted sender) smtp.mailfrom=peter@parkanyi.eu
+From: Peter Parkanyi <peter@parkanyi.eu>
+DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed; d=parkanyi.eu; s=mail;
+	t=1535989389; bh=4mBMlbb9RYAU7BwyoNH9dJAKqmX3kXz/ccahVeHHYaI=;
+	h=From:Subject:Date:To:From;
+	b=GgeRXrtlSrIFCfXDiLGmLuH57E4eX2RZkNZiLwf4lqTrintzJ7O1sG7MS7tsMawvd
+	 CfUekuAM8oDOdaKapmUFfv9oM6MrX6PStbGWpRFB7ADxPKs2MkVJW1LQD089NWN5qo
+	 KwrlRurtHSsWRtJg2gnTs0uh1HBZLRsOnPab+rphDdNG5EMXHe1LYlgSE1bsk07hUi
+	 35p8REBfHAClsr9Y5qEIpmQ3/04RkdPSvzF6EH3xV5C834HJLOB+kBpiT6RhfZQ12A
+	 7IIw9V7xofzCmH82dbsde3znwimLn8xZx0PVkXPO3KV4dd2uyrnVgJnBtsH9bvE3XY
+	 smTcR4h+747GA==
+Content-Type: text/plain;
+	charset=us-ascii
+Content-Transfer-Encoding: 7bit
+Mime-Version: 1.0 (Mac OS X Mail 12.0 \(3445.100.38\))
+Subject: Yolo
+Message-Id: <FCC2596B-4882-49A1-8E36-DF337FEA0008@parkanyi.eu>
+Date: Mon, 3 Sep 2018 16:43:07 +0100
+To: Dmitry Motylev <dmitry@redsift.io>
+
+Hi Dmitry!
+
+\o/

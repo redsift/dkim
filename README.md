@@ -5,7 +5,6 @@ The project was started as a fork of https://github.com/kalloc/dkim
 Original plan was just fix few defects and create PR but eventually the project was totally overhauled.
 
 ## TODO
-- Simple header canonicalization
 - Copied header fields (z=) verification
 
 # RFCs
