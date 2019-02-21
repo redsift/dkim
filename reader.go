@@ -35,6 +35,23 @@ type KVPair struct {
 // A MIMEHeader represents the key-value pairs in a mail message header.
 type MIMEHeader map[string][]KVPair
 
+// CanonicalizedAndFolded converts MIMEHeader into map[string][]string, where key is canonicalized header and
+// values are folded. The map could be used as mail.Headed
+func (h MIMEHeader) CanonicalizedAndFolded() map[string][]string {
+	m := make(map[string][]string)
+
+	for k, p := range h {
+		pLen := len(p)
+		l := make([]string, pLen, pLen)
+		for i := 0; i < pLen; i++ {
+			l[i] = p[i].Folded
+		}
+		m[k] = l
+	}
+
+	return m
+}
+
 // ReadMIMEHeader reads a MIME-style header from r.
 // The header is a sequence of possibly continued Key: Value lines
 // ending in a blank line.
