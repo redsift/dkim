@@ -1036,11 +1036,11 @@ func (r *Result) String() string {
 	}
 
 	if r.Signature.SignerDomain != "" {
-		w.WriteString("; Header.d=")
+		w.WriteString("; header.d=")
 		w.WriteString(r.Signature.SignerDomain)
 	}
 	if r.Signature.UserIdentifier != "" {
-		w.WriteString("; Header.i=")
+		w.WriteString("; header.i=")
 		w.WriteString(r.Signature.UserIdentifier)
 	}
 
