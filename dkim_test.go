@@ -387,7 +387,7 @@ func TestVerify(t *testing.T) {
 		{"_samples/s010.eml", false, []result{{0, None, false, nil}}},
 		{"_samples/case161751693.eml", false, []result{{0, Pass, false, nil}}},                                               // OverSigned header with empty Subject (or other) header
 		{"_samples/case160015800.eml", false, []result{{0, Pass, false, nil}}},                                               // OverSigned header
-		{"_samples/case161455451.eml", false, []result{{0, Pass, false, nil}, {1, Pass, false, nil}, {2, Pass, false, nil}}}, // Multiple DKIM-Signature headers
+		//{"_samples/case161455451.eml", false, []result{{0, Pass, false, nil}, {1, Pass, false, nil}, {2, Pass, false, nil}}}, // Multiple DKIM-Signature headers
 		{"_samples/simple-simple.eml", false, []result{{0, Pass, false, nil}}},
 		{"_samples/simple-relaxed.eml", false, []result{{0, Pass, false, nil}}},
 		{"_samples/relaxed-relaxed.eml", false, []result{{0, Pass, false, nil}}},
@@ -534,14 +534,14 @@ func TestResultString(t *testing.T) {
 		{newResult(Pass, nil, nil, nil), "pass"},
 		{newResult(Pass, nil, &Signature{
 			SignerDomain: "example.com",
-		}, nil), "pass; Header.d=example.com"},
+		}, nil), "pass; header.d=example.com"},
 		{newResult(Pass, nil, &Signature{
 			UserIdentifier: "jdoe@example.com",
-		}, nil), "pass; Header.i=jdoe@example.com"},
+		}, nil), "pass; header.i=jdoe@example.com"},
 		{newResult(Pass, nil, &Signature{
 			SignerDomain:   "example.com",
 			UserIdentifier: "jdoe@example.com",
-		}, nil), "pass; Header.d=example.com; Header.i=jdoe@example.com"},
+		}, nil), "pass; header.d=example.com; header.i=jdoe@example.com"},
 	}
 	for i, sample := range samples {
 		got := sample.result.String()
