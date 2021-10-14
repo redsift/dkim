@@ -194,8 +194,8 @@ const (
 )
 
 const (
-	sha1 = 3
-	sha256 = 5
+	sha1           = 3
+	sha256         = 5
 	ed25519_sha256 = 20
 )
 
@@ -284,9 +284,9 @@ var (
 	reKeySTag       = regexp.MustCompile(`:?\s*([[:alnum:]*](?:[[:alnum:]-]*[[:alnum:]])?)?\s*`)
 	reSignedHeaders = regexp.MustCompile(`:?\s*([^[:cntrl:]: ]+)\s*`)
 	algorithms      = map[string]*algorithm{
-		"rsa-sha1":   {crypto.SHA1, crypto.SHA1.New},
-		"rsa-sha256": {crypto.SHA256, crypto.SHA256.New},
-		"ed25519-sha256": {ed25519_sha256,  crypto.SHA256.New},
+		"rsa-sha1":       {crypto.SHA1, crypto.SHA1.New},
+		"rsa-sha256":     {crypto.SHA256, crypto.SHA256.New},
+		"ed25519-sha256": {ed25519_sha256, crypto.SHA256.New},
 	}
 )
 
@@ -863,7 +863,7 @@ func (s *Signature) verify(m *Message, options ...VerifyOption) (result *Result)
 		}
 	}
 
-	body, err  := ioutil.ReadAll(m.Body)
+	body, err := ioutil.ReadAll(m.Body)
 	if err != nil {
 		return newResult(None, wrapErr(ErrInputError, err.Error(), "bh"), s, pkey)
 
@@ -908,10 +908,11 @@ func (s *Signature) verify(m *Message, options ...VerifyOption) (result *Result)
 	//os.Stderr.WriteString("<<<\n")
 	hashed := s.algorithm.Sum(nil)
 	if s.AlgorithmID == ed25519_sha256 {
-		ok := ed25519.Verify([]byte(pkey.Raw),  body, s.Hash)
+		ok := ed25519.Verify([]byte(pkey.Raw), body, s.Hash)
 		if !ok {
 			return newResult(Fail, wrapErr(ErrBadSignature, "ed25519 verify failed", "b"), s, pkey)
 		}
+		return newResult(Pass, nil, s, pkey)
 	}
 	if err := rsa.VerifyPKCS1v15(pkey.key, crypto.Hash(s.AlgorithmID), hashed[:], s.Hash); err != nil {
 		return newResult(Fail, wrapErr(ErrBadSignature, err.Error(), "b"), s, pkey)
