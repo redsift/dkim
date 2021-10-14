@@ -240,6 +240,7 @@ type Signature struct {
 type PublicKey struct {
 	Raw        string   `json:"raw,omitempty"`        // raw value of the key record
 	Version    string   `json:"version,omitempty"`    // 'v' tag value
+	KeyType    string   `json:"key_type,omitempty"`   // 'k' tag value
 	Data       []byte   `json:"key,omitempty"`        // 'p' tag value
 	Algorithms []string `json:"algorithms,omitempty"` // parsed 'h' tag value; [] means "allowing all"
 	Services   []string `json:"services,omitempty"`   // parsed 's' tag value; [] is "*"
@@ -698,7 +699,8 @@ func parsePublicKey(s string) (*PublicKey, error) {
 				return unacceptableKey("h", value, expUnsupportedAlgorithm)
 			}
 		case "k": // Key type
-			if value != "rsa" {
+			k.KeyType = value
+			if value != "rsa" && value != "ed25519" {
 				// Unrecognized key types MUST be ignored.
 				// https://tools.ietf.org/html/rfc6376#page-27
 				return unacceptableKey("k", value, expUnsupportedAlgorithm)
@@ -719,6 +721,11 @@ func parsePublicKey(s string) (*PublicKey, error) {
 				if err != nil {
 					return unacceptableKey("p", value, err.Error())
 				}
+				k.Data = b
+				if k.KeyType == "ed25519" {
+					k.revoked = false
+					return k, nil
+				}
 				i, err := x509.ParsePKIXPublicKey(b)
 				if err != nil {
 					return unacceptableKey("p", value, err.Error())
@@ -728,7 +735,6 @@ func parsePublicKey(s string) (*PublicKey, error) {
 					// should not happen
 					return unacceptableKey("p", value, "internal error")
 				}
-				k.Data = b
 				k.key = pkey
 				k.revoked = false
 			}
@@ -908,7 +914,7 @@ func (s *Signature) verify(m *Message, options ...VerifyOption) (result *Result)
 	//os.Stderr.WriteString("<<<\n")
 	hashed := s.algorithm.Sum(nil)
 	if s.AlgorithmID == ed25519_sha256 {
-		ok := ed25519.Verify([]byte(pkey.Raw), body, s.Hash)
+		ok := ed25519.Verify(pkey.Data, body, s.Hash)
 		if !ok {
 			return newResult(Fail, wrapErr(ErrBadSignature, "ed25519 verify failed", "b"), s, pkey)
 		}
