@@ -914,7 +914,7 @@ func (s *Signature) verify(m *Message, options ...VerifyOption) (result *Result)
 	//os.Stderr.WriteString("<<<\n")
 	hashed := s.algorithm.Sum(nil)
 	if s.AlgorithmID == ed25519_sha256 {
-		ok := ed25519.Verify(pkey.Data, body, s.Hash)
+		ok := ed25519.Verify(pkey.Data, hashed[:], s.Hash)
 		if !ok {
 			return newResult(Fail, wrapErr(ErrBadSignature, "ed25519 verify failed", "b"), s, pkey)
 		}
