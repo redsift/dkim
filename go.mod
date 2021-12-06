@@ -1,4 +1,4 @@
-module dkim
+module github.com/redsift/dkim
 
 go 1.17
 
