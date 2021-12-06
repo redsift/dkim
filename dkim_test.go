@@ -49,6 +49,9 @@ func TestMain(m *testing.M) {
 }
 
 func TestDnsTxtPublicKeyQuery(t *testing.T) {
+	if testing.Short() {
+		t.Skip("No network")
+	}
 	mustKey := func(s, d string) *PublicKey {
 		k, _ := CachedPublicKeyQuery(&Signature{Selector: s, SignerDomain: d})
 		if k == nil {
