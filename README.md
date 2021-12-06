@@ -1,4 +1,4 @@
-# DKIM verification [![Go Report Card](https://goreportcard.com/badge/github.com/redsift/dkim)](https://goreportcard.com/report/github.com/redsift/dkim) [![GoDoc](https://godoc.org/github.com/cwredsift/dkim?status.svg)](https://godoc.org/github.com/redsift/dkim)
+# DKIM verification [![Go Report Card](https://goreportcard.com/badge/github.com/redsift/dkim)](https://goreportcard.com/report/github.com/redsift/dkim) [![GoDoc](https://godoc.org/github.com/cwredsift/dkim?status.svg)](https://godoc.org/github.com/redsift/dkim)[![Go](https://github.com/redsift/dkim/actions/workflows/go.yml/badge.svg)](https://github.com/redsift/dkim/actions/workflows/go.yml)
 
 The project was started as a fork of https://github.com/kalloc/dkim
 
