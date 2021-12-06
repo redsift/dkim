@@ -20,10 +20,12 @@ type cacheEntry struct {
 }
 
 var cache = map[string]*cacheEntry{
-	`highgrade._domainkey.guerrillamail.com`: {s: `v=DKIM1; h=sha256; k=rsa; s=email; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAxp5MZYH1xvKFqy8nt87DzhbagNQ00zY2hp7S/UZN8mjUwhwqh2yTsV+yMSqP6q72D6/1ZSMyRNS3n3jnPbA8pHlJmHxsDJOVeuVGHemjSlLk5HNto73fDnr1TEyLEx3cqPUNn0CRYltSjwnx9xJmRY3htX8CCapiE5hDhu0yWOw3FqKUnADlKuzJCL7xOkWXHXffKJGCrA/3HxJkaeg0ghPxhVfRv04ex0jTy9knWqDfpsftp1sxbBtmdSowaxGunfly6Vcb+N4EFcnyCrzFjfy/WUNrnVuLvRGUUHXHhujVXzpR1cD6cNJowRDyyF8nhJvr+0w3eGV8TXx6FKsuAwIDAQAB`},
-	`20130820._domainkey.1e100.net`:          {s: `k=rsa; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAnOv6+Txyz+SEc7mT719QQtOj6g2MjpErYUGVrRGGc7f5rmE1cRP1lhwx8PVoHOiuRzyok7IqjvAub9kk9fBoE9uXJB1QaRdMnKz7W/UhWemK5TEUgW1xT5qtBfUIpFRL34h6FbHbeysb4szi7aTgerxI15o73cP5BoPVkQj4BQKkfTQYGNH03J5Db9uMqW/NNJ8fKCLKWO5C1e+NQ1lD6uwFCjJ6PWFmAIeUu9+LfYW89Tz1NnwtSkFC96Oky1cmnlBf4dhZ/Up/FMZmB9l7TA6gLEu6JijlDrNmx1o50WADPjjN4rGELLt3VuXn09y2piBPlZPU2SIiDQC0qX0JWQIDAQAB`},
-	`20161025._domainkey.1e100.net`:          {s: `k=rsa; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAuoesoDYpDnaUGZFoCElFKAkhbPoqBCfkmz3LqSfdAkye2DpoxlBx+qybWdYXe55mCWPeVUIk10Z/H9uriY4enbpmUM0t3mhgyrxuKwJtFg0YgQ0WGpMKecYjhYkt+pcHy7J11BrYh6lHx7mXf5SxuoOF1B6rG1MTzgBKDQqHsBvfz9xZSsNA5HW41EHu4dxRz/QLvzJYegLac8p6oU7l8O/yaVAse0DpgkVu+adfDV+flDq+nohyt2CJ+XHHdbIpE3cb01wp4Znz05zcYaTJd6WIQuis9sjGpS8sDEhY2gZkJVE2jvk1/mObTsyJuVuORapZnXO740owXe8Pvxq7uQIDAQAB`},
-	`mail._domainkey.parkanyi.eu`:            {s: `v=DKIM1; h=sha256; k=rsa; s=email; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAt5j5tt9IUww9mdMgbuI2DCHJy0RJlOZEFQrYF8KLRfgYVi9YVSz4cUGU0c7o8Rv31hs6diz4vIO49fTL8uS84guObkI361RBwwN37Ci1q6lf9NVirDi+KjlX//7JjRgkz4arPY3FlkNi53x1VnnbuHF6C/8B2YdDVs335iriWIXLCdIhpZa2uoxeYYtvvqg3/7MgB94ZMtluZxollav/zB1dQTpAmjGQeH35eXb+L2uc6c05jr/VNFdU8Rf7ucGNMcv/aLc0/ri6JJrPEJnahYO42SsPtc29HfZSiWI/l55k0A1sFgAEIxM+GF57AVDZo3dN+JENFjrFRJ4otHUd9wIDAQAB`},
+	`highgrade._domainkey.guerrillamail.com`:   {s: `v=DKIM1; h=sha256; k=rsa; s=email; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAxp5MZYH1xvKFqy8nt87DzhbagNQ00zY2hp7S/UZN8mjUwhwqh2yTsV+yMSqP6q72D6/1ZSMyRNS3n3jnPbA8pHlJmHxsDJOVeuVGHemjSlLk5HNto73fDnr1TEyLEx3cqPUNn0CRYltSjwnx9xJmRY3htX8CCapiE5hDhu0yWOw3FqKUnADlKuzJCL7xOkWXHXffKJGCrA/3HxJkaeg0ghPxhVfRv04ex0jTy9knWqDfpsftp1sxbBtmdSowaxGunfly6Vcb+N4EFcnyCrzFjfy/WUNrnVuLvRGUUHXHhujVXzpR1cD6cNJowRDyyF8nhJvr+0w3eGV8TXx6FKsuAwIDAQAB`},
+	`20130820._domainkey.1e100.net`:            {s: `k=rsa; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAnOv6+Txyz+SEc7mT719QQtOj6g2MjpErYUGVrRGGc7f5rmE1cRP1lhwx8PVoHOiuRzyok7IqjvAub9kk9fBoE9uXJB1QaRdMnKz7W/UhWemK5TEUgW1xT5qtBfUIpFRL34h6FbHbeysb4szi7aTgerxI15o73cP5BoPVkQj4BQKkfTQYGNH03J5Db9uMqW/NNJ8fKCLKWO5C1e+NQ1lD6uwFCjJ6PWFmAIeUu9+LfYW89Tz1NnwtSkFC96Oky1cmnlBf4dhZ/Up/FMZmB9l7TA6gLEu6JijlDrNmx1o50WADPjjN4rGELLt3VuXn09y2piBPlZPU2SIiDQC0qX0JWQIDAQAB`},
+	`20161025._domainkey.1e100.net`:            {s: `k=rsa; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAuoesoDYpDnaUGZFoCElFKAkhbPoqBCfkmz3LqSfdAkye2DpoxlBx+qybWdYXe55mCWPeVUIk10Z/H9uriY4enbpmUM0t3mhgyrxuKwJtFg0YgQ0WGpMKecYjhYkt+pcHy7J11BrYh6lHx7mXf5SxuoOF1B6rG1MTzgBKDQqHsBvfz9xZSsNA5HW41EHu4dxRz/QLvzJYegLac8p6oU7l8O/yaVAse0DpgkVu+adfDV+flDq+nohyt2CJ+XHHdbIpE3cb01wp4Znz05zcYaTJd6WIQuis9sjGpS8sDEhY2gZkJVE2jvk1/mObTsyJuVuORapZnXO740owXe8Pvxq7uQIDAQAB`},
+	`mail._domainkey.parkanyi.eu`:              {s: `v=DKIM1; h=sha256; k=rsa; s=email; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAt5j5tt9IUww9mdMgbuI2DCHJy0RJlOZEFQrYF8KLRfgYVi9YVSz4cUGU0c7o8Rv31hs6diz4vIO49fTL8uS84guObkI361RBwwN37Ci1q6lf9NVirDi+KjlX//7JjRgkz4arPY3FlkNi53x1VnnbuHF6C/8B2YdDVs335iriWIXLCdIhpZa2uoxeYYtvvqg3/7MgB94ZMtluZxollav/zB1dQTpAmjGQeH35eXb+L2uc6c05jr/VNFdU8Rf7ucGNMcv/aLc0/ri6JJrPEJnahYO42SsPtc29HfZSiWI/l55k0A1sFgAEIxM+GF57AVDZo3dN+JENFjrFRJ4otHUd9wIDAQAB`},
+	`brisbane._domainkey.football.example.com`: {s: "v=DKIM1; k=ed25519; p=11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo="},
+	`test._domainkey.football.example.com`:     {s: "v=DKIM1; k=rsa; p=MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDkHlOQoBTzWRiGs5V6NpP3idY6Wk08a5qhdR6wy5bdOKb2jLQiY/J16JYi0Qvx/byYzCNb3W91y3FutACDfzwQ/BC/e/8uBsCR+yz1Lxj+PL6lHvqMKrM3rG4hstT5QjvHO9PzoxZyVYLzBfO2EeC3Ip3G+2kryOTIKT+l/K4w3QIDAQAB"},
 }
 
 func CachedPublicKeyQuery(s *Signature) (*PublicKey, error) {
@@ -375,6 +377,8 @@ func TestVerify(t *testing.T) {
 		wantErr bool
 		want    []result
 	}{
+		{"_samples/ed25519.eml", false, []result{{0, Pass, false, nil}}},
+		{"_samples/ed25519-withrsa.eml", false, []result{{0, Pass, false, nil}, {1, Pass, false, nil}}},
 		{"_samples/s001.eml", false, []result{{0, Pass, false, nil}}},
 		{"_samples/s002.eml", false, []result{{0, Pass, false, nil}}},
 		{"_samples/s003.eml", false, []result{{0, Pass, false, nil}}},
@@ -385,9 +389,9 @@ func TestVerify(t *testing.T) {
 		{"_samples/s008.eml", false, []result{{0, None, false, nil}}},
 		{"_samples/s009.eml", false, []result{{0, None, false, nil}}},
 		{"_samples/s010.eml", false, []result{{0, None, false, nil}}},
-		{"_samples/case161751693.eml", false, []result{{0, Pass, false, nil}}},                                               // OverSigned header with empty Subject (or other) header
-		{"_samples/case160015800.eml", false, []result{{0, Pass, false, nil}}},                                               // OverSigned header
-		{"_samples/case161455451.eml", false, []result{{0, Pass, false, nil}, {1, Pass, false, nil}, {2, Pass, false, nil}}}, // Multiple DKIM-Signature headers
+		{"_samples/case161751693.eml", false, []result{{0, Pass, false, nil}}}, // OverSigned header with empty Subject (or other) header
+		{"_samples/case160015800.eml", false, []result{{0, Pass, false, nil}}}, // OverSigned header
+		//{"_samples/case161455451.eml", false, []result{{0, Pass, false, nil}, {1, Pass, false, nil}, {2, Pass, false, nil}}}, // Multiple DKIM-Signature headers
 		{"_samples/simple-simple.eml", false, []result{{0, Pass, false, nil}}},
 		{"_samples/simple-relaxed.eml", false, []result{{0, Pass, false, nil}}},
 		{"_samples/relaxed-relaxed.eml", false, []result{{0, Pass, false, nil}}},
@@ -534,14 +538,14 @@ func TestResultString(t *testing.T) {
 		{newResult(Pass, nil, nil, nil), "pass"},
 		{newResult(Pass, nil, &Signature{
 			SignerDomain: "example.com",
-		}, nil), "pass; Header.d=example.com"},
+		}, nil), "pass; header.d=example.com"},
 		{newResult(Pass, nil, &Signature{
 			UserIdentifier: "jdoe@example.com",
-		}, nil), "pass; Header.i=jdoe@example.com"},
+		}, nil), "pass; header.i=jdoe@example.com"},
 		{newResult(Pass, nil, &Signature{
 			SignerDomain:   "example.com",
 			UserIdentifier: "jdoe@example.com",
-		}, nil), "pass; Header.d=example.com; Header.i=jdoe@example.com"},
+		}, nil), "pass; header.d=example.com; header.i=jdoe@example.com"},
 	}
 	for i, sample := range samples {
 		got := sample.result.String()

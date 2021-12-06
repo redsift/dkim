@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"crypto"
+	"crypto/ed25519"
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/base64"
@@ -11,6 +12,7 @@ import (
 	"errors"
 	"hash"
 	"io"
+	"io/ioutil"
 	"net"
 	"regexp"
 	"strconv"
@@ -191,14 +193,22 @@ const (
 	expEmptySelector        = "empty selector"
 )
 
+const (
+	sha1           = 3
+	sha256         = 5
+	ed25519_sha256 = 20
+)
+
 type AlgorithmID crypto.Hash
 
 func (id AlgorithmID) MarshalText() ([]byte, error) {
 	switch id {
-	case 3:
+	case sha1:
 		return []byte("SHA1"), nil
-	case 5:
+	case sha256:
 		return []byte("SHA256"), nil
+	case ed25519_sha256:
+		return []byte("ED25519-SHA256"), nil
 	default:
 		return []byte(strconv.FormatUint(uint64(id), 10)), nil
 	}
@@ -230,6 +240,7 @@ type Signature struct {
 type PublicKey struct {
 	Raw        string   `json:"raw,omitempty"`        // raw value of the key record
 	Version    string   `json:"version,omitempty"`    // 'v' tag value
+	KeyType    string   `json:"key_type,omitempty"`   // 'k' tag value
 	Data       []byte   `json:"key,omitempty"`        // 'p' tag value
 	Algorithms []string `json:"algorithms,omitempty"` // parsed 'h' tag value; [] means "allowing all"
 	Services   []string `json:"services,omitempty"`   // parsed 's' tag value; [] is "*"
@@ -274,8 +285,9 @@ var (
 	reKeySTag       = regexp.MustCompile(`:?\s*([[:alnum:]*](?:[[:alnum:]-]*[[:alnum:]])?)?\s*`)
 	reSignedHeaders = regexp.MustCompile(`:?\s*([^[:cntrl:]: ]+)\s*`)
 	algorithms      = map[string]*algorithm{
-		"rsa-sha1":   {crypto.SHA1, crypto.SHA1.New},
-		"rsa-sha256": {crypto.SHA256, crypto.SHA256.New},
+		"rsa-sha1":       {crypto.SHA1, crypto.SHA1.New},
+		"rsa-sha256":     {crypto.SHA256, crypto.SHA256.New},
+		"ed25519-sha256": {ed25519_sha256, crypto.SHA256.New},
 	}
 )
 
@@ -687,7 +699,8 @@ func parsePublicKey(s string) (*PublicKey, error) {
 				return unacceptableKey("h", value, expUnsupportedAlgorithm)
 			}
 		case "k": // Key type
-			if value != "rsa" {
+			k.KeyType = value
+			if value != "rsa" && value != "ed25519" {
 				// Unrecognized key types MUST be ignored.
 				// https://tools.ietf.org/html/rfc6376#page-27
 				return unacceptableKey("k", value, expUnsupportedAlgorithm)
@@ -708,6 +721,11 @@ func parsePublicKey(s string) (*PublicKey, error) {
 				if err != nil {
 					return unacceptableKey("p", value, err.Error())
 				}
+				k.Data = b
+				if k.KeyType == "ed25519" {
+					k.revoked = false
+					return k, nil
+				}
 				i, err := x509.ParsePKIXPublicKey(b)
 				if err != nil {
 					return unacceptableKey("p", value, err.Error())
@@ -717,7 +735,6 @@ func parsePublicKey(s string) (*PublicKey, error) {
 					// should not happen
 					return unacceptableKey("p", value, "internal error")
 				}
-				k.Data = b
 				k.key = pkey
 				k.revoked = false
 			}
@@ -852,7 +869,13 @@ func (s *Signature) verify(m *Message, options ...VerifyOption) (result *Result)
 		}
 	}
 
-	if code, err := s.verifyBodyHash(m.Body); err != nil {
+	body, err := ioutil.ReadAll(m.Body)
+	if err != nil {
+		return newResult(None, wrapErr(ErrInputError, err.Error(), "bh"), s, pkey)
+
+	}
+
+	if code, err := s.verifyBodyHash(bytes.NewReader(body)); err != nil {
 		return newResult(code, wrapErr(ErrBadSignature, err.Error(), "bh"), s, pkey)
 	}
 
@@ -890,6 +913,13 @@ func (s *Signature) verify(m *Message, options ...VerifyOption) (result *Result)
 	_, _ = w.Write(canonicalizedHeader(s.Header, s.emptyHashValue, s.RelaxedHeader))
 	//os.Stderr.WriteString("<<<\n")
 	hashed := s.algorithm.Sum(nil)
+	if s.AlgorithmID == ed25519_sha256 {
+		ok := ed25519.Verify(pkey.Data, hashed[:], s.Hash)
+		if !ok {
+			return newResult(Fail, wrapErr(ErrBadSignature, "ed25519 verify failed", "b"), s, pkey)
+		}
+		return newResult(Pass, nil, s, pkey)
+	}
 	if err := rsa.VerifyPKCS1v15(pkey.key, crypto.Hash(s.AlgorithmID), hashed[:], s.Hash); err != nil {
 		return newResult(Fail, wrapErr(ErrBadSignature, err.Error(), "b"), s, pkey)
 	}
