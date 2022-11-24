@@ -159,6 +159,9 @@ func TestParsePublicKey(t *testing.T) {
 }
 
 func compareSignatures(l, r *Signature) bool {
+	l.getHeadersFunc = nil
+	r.getHeadersFunc = nil
+
 	if l == r {
 		return true
 	}
@@ -293,7 +296,7 @@ func TestParseSignature_Valid(t *testing.T) {
 			continue
 		}
 		t.Run(fmt.Sprintf("%d_%s", testNo, test.name), func(t *testing.T) {
-			got, err := parseSignature("DKIM-Signature", test.raw, test.raw)
+			got, err := parseSignature("DKIM-Signature", test.raw, test.raw, requiredTags)
 			if test.wantErr != (err != nil) {
 				t.Errorf("parseSignature() err=%v, wantErr=%t", err, test.wantErr)
 			}
@@ -351,7 +354,7 @@ func TestParseSignature_Errors(t *testing.T) {
 			continue
 		}
 		t.Run(fmt.Sprintf("%d", testNo), func(t *testing.T) {
-			_, got := parseSignature("DKIM-Signature", test.raw, test.raw)
+			_, got := parseSignature("DKIM-Signature", test.raw, test.raw, requiredTags)
 			if !reflect.DeepEqual(got, test.want) {
 				t.Errorf("parseSignature()\n\tgot =\"%#v\"\n\twant=\"%#v\"", got, test.want)
 			}
