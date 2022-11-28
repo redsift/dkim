@@ -235,7 +235,7 @@ type Signature struct {
 	Selector       string            `json:"selector"`                // 's' tag value
 	Timestamp      time.Time         `json:"ts"`                      // 't' tag value as time.Time
 	Expiration     time.Time         `json:"exp"`                     // 'x' tag value as time.Time
-	Cv             ResultCode        `json:"cv"`                      // 'cv' tag, chain validation value for arc seal
+	ArcCV             ResultCode        `json:"arcCv"`                      // 'cv' tag, chain validation value for arc seal
 	CopiedHeaders  map[string]string `json:"copiedHeaders,omitempty"` // parsed 'z' tag value
 	query          PublicKeyQuery
 
