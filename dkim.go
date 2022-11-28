@@ -230,7 +230,7 @@ type Signature struct {
 	SignerDomain   string            `json:"signerDomain"`            // 'd' tag value
 	Headers        []string          `json:"headers"`                 // parsed 'h' tag value
 	UserIdentifier string            `json:"userId"`                  // 'i' tag value
-	Instance       int               `json:"instance"`                // 'i' tag value (only in arc headers)
+	ArcInstance       int               `json:"arcInstance"`                // 'i' tag value (only in arc headers)
 	Length         int64             `json:"length"`                  // 'l' tag value
 	Selector       string            `json:"selector"`                // 's' tag value
 	Timestamp      time.Time         `json:"ts"`                      // 't' tag value as time.Time
