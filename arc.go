@@ -71,7 +71,7 @@ func (s *arcSet) verify(instance int, msg *Message) (*arcResult, *VerificationEr
 		arcRes.asValid = true
 	}
 
-	arcRes.cv = s.seal.Cv
+	arcRes.cv = s.seal.ArcCV
 	arcRes.instance = instance
 
 	return arcRes, nil
@@ -124,7 +124,7 @@ func VerifyArc(msg *Message) (*Result, error) {
 					[]string{amsKey, arcSet.messageSignature.Raw},
 				)
 
-				if arcSet.messageSignature.Instance == i+1 {
+				if arcSet.messageSignature.ArcInstance == i+1 {
 					break
 				}
 				// skip last seal as it's not in the signature
@@ -222,12 +222,12 @@ func extractArcSets(headers MIMEHeader) ([]*arcSet, error) {
 		}
 
 		// make sure instance values are aligned
-		if as.Instance != ams.Instance && ams.Instance != aar.Instance {
+		if as.ArcInstance != ams.ArcInstance && ams.ArcInstance != aar.ArcInstance {
 			return nil, errInstanceMismatch
 		}
 
 		// use instance id as we want them in correct order
-		sets[as.Instance-1] = &arcSet{
+		sets[as.ArcInstance-1] = &arcSet{
 			authenticationResults: aar,
 			messageSignature:      ams,
 			seal:                  as,

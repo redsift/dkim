@@ -230,12 +230,12 @@ type Signature struct {
 	SignerDomain   string            `json:"signerDomain"`            // 'd' tag value
 	Headers        []string          `json:"headers"`                 // parsed 'h' tag value
 	UserIdentifier string            `json:"userId"`                  // 'i' tag value
-	ArcInstance       int               `json:"arcInstance"`                // 'i' tag value (only in arc headers)
+	ArcInstance    int               `json:"arcInstance"`             // 'i' tag value (only in arc headers)
 	Length         int64             `json:"length"`                  // 'l' tag value
 	Selector       string            `json:"selector"`                // 's' tag value
 	Timestamp      time.Time         `json:"ts"`                      // 't' tag value as time.Time
 	Expiration     time.Time         `json:"exp"`                     // 'x' tag value as time.Time
-	ArcCV             ResultCode        `json:"arcCv"`                      // 'cv' tag, chain validation value for arc seal
+	ArcCV          ResultCode        `json:"arcCv"`                   // 'cv' tag, chain validation value for arc seal
 	CopiedHeaders  map[string]string `json:"copiedHeaders,omitempty"` // parsed 'z' tag value
 	query          PublicKeyQuery
 
@@ -464,7 +464,7 @@ func parseSignature(k, folded, original string, required uint64) (*Signature, *V
 			// i is for instance in arc
 			switch s.Header {
 			case asKey, amsKey, aarKey:
-				s.Instance, err = strconv.Atoi(value)
+				s.ArcInstance, err = strconv.Atoi(value)
 				if err != nil {
 					return badSignature("i", "", expBadinstance)
 				}
@@ -516,8 +516,8 @@ func parseSignature(k, folded, original string, required uint64) (*Signature, *V
 				s.CopiedHeaders[m[1]] = m[2]
 			}
 		case "cv":
-			s.Cv = extractResultCode(value)
-			if s.Cv == 0 {
+			s.ArcCV = extractResultCode(value)
+			if s.ArcCV == 0 {
 				return badSignature("cv", value, expMalformedTagValue)
 			}
 			required &^= fCv
