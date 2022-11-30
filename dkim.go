@@ -218,26 +218,27 @@ func (id AlgorithmID) MarshalText() ([]byte, error) {
 
 // Signature holds parsed DKIM signature
 type Signature struct {
-	Header         string `json:"header"` // Header of the signature
-	Raw            string `json:"raw"`    // Raw value of the signature
-	emptyHashValue string
-	algorithm      hash.Hash
-	AlgorithmID    AlgorithmID       `json:"algorithmId"`             // 3 (SHA1) or 5 (SHA256)
-	Hash           []byte            `json:"hash"`                    // 'h' tag value
-	BodyHash       []byte            `json:"bodyHash"`                // 'bh' tag value
-	RelaxedHeader  bool              `json:"relaxedHeader"`           // header canonicalization algorithm
-	RelaxedBody    bool              `json:"relaxedBody"`             // body canonicalization algorithm
-	SignerDomain   string            `json:"signerDomain"`            // 'd' tag value
-	Headers        []string          `json:"headers"`                 // parsed 'h' tag value
-	UserIdentifier string            `json:"userId"`                  // 'i' tag value
-	ArcInstance    int               `json:"arcInstance"`             // 'i' tag value (only in arc headers)
-	Length         int64             `json:"length"`                  // 'l' tag value
-	Selector       string            `json:"selector"`                // 's' tag value
-	Timestamp      time.Time         `json:"ts"`                      // 't' tag value as time.Time
-	Expiration     time.Time         `json:"exp"`                     // 'x' tag value as time.Time
-	ArcCV          ResultCode        `json:"arcCv"`                   // 'cv' tag, chain validation value for arc seal
-	CopiedHeaders  map[string]string `json:"copiedHeaders,omitempty"` // parsed 'z' tag value
-	query          PublicKeyQuery
+	Header           string `json:"header"` // Header of the signature
+	Raw              string `json:"raw"`    // Raw value of the signature
+	emptyHashValue   string
+	algorithm        hash.Hash
+	AlgorithmID      AlgorithmID       `json:"algorithmId"`             // 3 (SHA1) or 5 (SHA256)
+	Hash             []byte            `json:"hash"`                    // 'h' tag value
+	BodyHash         []byte            `json:"bodyHash"`                // 'bh' tag value
+	RelaxedHeader    bool              `json:"relaxedHeader"`           // header canonicalization algorithm
+	RelaxedBody      bool              `json:"relaxedBody"`             // body canonicalization algorithm
+	SignerDomain     string            `json:"signerDomain"`            // 'd' tag value
+	Headers          []string          `json:"headers"`                 // parsed 'h' tag value
+	UserIdentifier   string            `json:"userId"`                  // 'i' tag value
+	ArcInstance      int               `json:"arcInstance"`             // 'i' tag value (only in arc headers)
+	Length           int64             `json:"length"`                  // 'l' tag value
+	Selector         string            `json:"selector"`                // 's' tag value
+	Timestamp        time.Time         `json:"ts"`                      // 't' tag value as time.Time
+	Expiration       time.Time         `json:"exp"`                     // 'x' tag value as time.Time
+	ArcCV            ResultCode        `json:"arcCv"`                   // 'cv' tag, chain validation value for arc seal
+	CopiedHeaders    map[string]string `json:"copiedHeaders,omitempty"` // parsed 'z' tag value
+	query            PublicKeyQuery
+	canonicalization bool
 
 	getHeadersFunc func(msg *Message) [][]string
 }
@@ -408,6 +409,7 @@ func parseSignature(k, folded, original string, required uint64) (*Signature, *V
 			}
 			required &^= fBodyHash
 		case "c":
+			s.canonicalization = true
 			m := reCanonicalization.FindAllStringSubmatch(value, 1)
 			// m := [["headerAlgorigthm/bodyAlgorithm" "headerAlgorigthm" "bodyAlgorithm"]]
 			if m == nil {
@@ -465,7 +467,7 @@ func parseSignature(k, folded, original string, required uint64) (*Signature, *V
 			switch s.Header {
 			case asKey, amsKey, aarKey:
 				s.ArcInstance, err = strconv.Atoi(value)
-				if err != nil {
+				if err != nil || s.ArcInstance == 0 {
 					return badSignature("i", "", expBadinstance)
 				}
 				required &^= fInstance
@@ -802,11 +804,17 @@ func parsePublicKey(s string) (*PublicKey, error) {
 }
 
 func (s *Signature) verifyBodyHash(rs io.ReadSeeker) (ResultCode, error) {
-	defer func(offset int64, _ error) {
-		_, _ = rs.Seek(offset, io.SeekStart)
-	}(rs.Seek(0, io.SeekCurrent))
+	defer func() {
+		_, _ = rs.Seek(0, io.SeekStart)
+	}()
 
-	var r io.Reader = rs
+	body, err := ioutil.ReadAll(rs)
+	if err != nil {
+		return 0, err
+	}
+
+	var r io.Reader
+	r = bytes.NewReader(body)
 	// In Hash step 1, the Signer/Verifier MUST Hash the message body,
 	// canonicalized using the body canonicalization algorithm specified
 	// in the "c=" tag and then truncated to the Length specified in the "l=" tag.
@@ -863,11 +871,10 @@ func (s *Signature) verify(m *Message, options ...VerifyOption) (result *Result)
 	}
 
 	pkey, err := s.query(s)
-
-	switch err {
-	case nil: // no errors
-	case ErrKeyUnavailable:
+	switch {
+	case err == ErrKeyUnavailable || pkey == nil:
 		return newResult(Temperror, wrapErr(ErrKeyUnavailable, "", "s"), s, nil)
+	case err == nil: // no errors
 	default: // others
 		if e, ok := err.(*VerificationError); ok {
 			return newResult(Permerror, e, s, nil)
@@ -898,14 +905,9 @@ func (s *Signature) verify(m *Message, options ...VerifyOption) (result *Result)
 		}
 	}
 
-	body, err := ioutil.ReadAll(m.Body)
-	if err != nil {
-		return newResult(None, wrapErr(ErrInputError, err.Error(), "bh"), s, pkey)
-	}
-
 	// no body hash in arc seal
 	if s.Header != asKey {
-		if code, err := s.verifyBodyHash(bytes.NewReader(body)); err != nil {
+		if code, err := s.verifyBodyHash(m.Body); err != nil {
 			return newResult(code, wrapErr(ErrBadSignature, err.Error(), "bh"), s, pkey)
 		}
 	}

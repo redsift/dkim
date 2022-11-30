@@ -40,7 +40,6 @@ type arcSet struct {
 }
 
 func (s *arcSet) verify(instance int, msg *Message) (*arcResult, *VerificationError) {
-	//todo: ????
 	if contains(s.messageSignature.Headers, "arc-seal") {
 		return nil, &VerificationError{
 			Err:    errAMSIncludesSealHeader,
@@ -52,10 +51,6 @@ func (s *arcSet) verify(instance int, msg *Message) (*arcResult, *VerificationEr
 
 	// Validate Arc-Message-signature
 	res := s.messageSignature.verify(msg)
-	if res.Error != nil {
-		return nil, res.Error
-	}
-
 	arcRes := &arcResult{}
 	if res.Result == Pass {
 		arcRes.amsValid = true
@@ -63,10 +58,6 @@ func (s *arcSet) verify(instance int, msg *Message) (*arcResult, *VerificationEr
 
 	// Validate Arc-Seal
 	res = s.seal.verify(msg)
-	if res.Error != nil {
-		return nil, res.Error
-	}
-
 	if res.Result == Pass {
 		arcRes.asValid = true
 	}
@@ -96,7 +87,7 @@ func VerifyArc(msg *Message) (*Result, error) {
 
 	arcSets, err := extractArcSets(msg.Header)
 	if err != nil {
-		return nil, err
+		return &Result{Result: Fail, Error: &VerificationError{Source: VerifyError, Err: err}}, nil
 	}
 
 	//	"The maximum number of ARC Sets that can be attached to a
@@ -151,6 +142,10 @@ func VerifyArc(msg *Message) (*Result, error) {
 		}}
 	}
 
+	if !results[0].amsValid {
+		return arcResult(Fail, "Most recent ARC-Message-Signature did not validate", results[0].instance), nil
+	}
+
 	// Validate results
 	//
 	//	"The "cv" value for all ARC-Seal header fields MUST NOT be
@@ -158,24 +153,11 @@ func VerifyArc(msg *Message) (*Result, error) {
 	//	MUST be "pass".  For the ARC Set with instance value = 1, the
 	//	value MUST be "none"."
 	for _, res := range results {
-		//switch {
-		//case res.cv == Fail:
-		//	return arcResult(None, "ARC-Seal reported failure, the chain is terminated", res.instance), nil
-		//case !res.asValid:
-		//	return arcResult(Fail, "ARC-Seal did not validate", res.instance), nil
-		//case (res.instance == 1) && (res.cv == None):
-		//	return arcResult(Fail, "ARC-Seal reported invalid status", res.instance), nil
-		//case (res.instance != 1) && (res.cv == None):
-		//	return arcResult(Fail, "ARC-Seal reported invalid status", res.instance), nil
-		//}
-
 		switch {
 		case res.cv == Fail:
 			return arcResult(Fail, "ARC-Seal reported failure, the chain is terminated", res.instance), nil
 		case !res.asValid:
 			return arcResult(Fail, "ARC-Seal did not validate", res.instance), nil
-		case !res.amsValid:
-			return arcResult(Fail, "ARC-Message-Signature did not validate", res.instance), nil
 		case (res.instance == 1) && (res.cv != None):
 			return arcResult(Fail, "ARC-Seal reported invalid status", res.instance), nil
 		case (res.instance > 1) && (res.cv != Pass):
@@ -193,20 +175,16 @@ func extractArcSets(headers MIMEHeader) ([]*arcSet, error) {
 
 	// Each arc-set must have exactly one of each header (seal, message signature and authentication results)
 	instances := len(arcSeals)
-	if instances != len(signatures) && len(signatures) != len(results) {
+	if (instances != len(signatures)) || (len(signatures) != len(results)) {
 		return nil, errMissingArcFields
 	}
 
 	sets := make([]*arcSet, instances)
-	/*
-		todo: assumes headers are inorder, might want to change this
-	*/
 	for i := 0; i < instances; i++ {
 		as, err := parseSignature(asKey, arcSeals[i].Folded, arcSeals[i].Original, requiredASTags)
 		if err != nil {
 			return nil, err
 		}
-
 		// Seals only use "relaxed" header field canonicalization
 		// https://www.rfc-editor.org/rfc/rfc8617.html#section-4.1.3
 		as.RelaxedHeader = true
@@ -214,6 +192,10 @@ func extractArcSets(headers MIMEHeader) ([]*arcSet, error) {
 		ams, err := parseSignature(amsKey, signatures[i].Folded, signatures[i].Original, requiredAMSTags)
 		if err != nil {
 			return nil, err
+		}
+		// if "c=" not given, use relaxed
+		if !ams.canonicalization {
+			ams.RelaxedHeader = true
 		}
 
 		aar, err := parseSignature(aarKey, results[i].Folded, results[i].Original, requiredAARTags)
