@@ -13,7 +13,7 @@ import (
 
 type Document struct {
 	Description string            `yaml:"description"`
-	Tests       map[string]Test   `yaml:",flow"`
+	Tests       map[string]Test   `yaml:"tests"`
 	TxtRecords  map[string]string `yaml:"txt-records"`
 }
 
