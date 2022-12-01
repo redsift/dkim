@@ -3,12 +3,13 @@ package dkim
 import (
 	"bytes"
 	"fmt"
-	"gopkg.in/yaml.v2"
 	"io"
 	"io/ioutil"
 	"os"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v2"
 )
 
 type Document struct {
