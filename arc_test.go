@@ -53,6 +53,7 @@ func TestVerifyArc(t *testing.T) {
 				skipTests(t, testName, []string{
 					"as_format_inv_tag_key",
 					"as_format_tags_dup",
+					// skip simple/... tests as well
 					"ams_fields_c_sr",
 					"ams_fields_c_ss",
 				})
