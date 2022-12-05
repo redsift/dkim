@@ -6,9 +6,9 @@ import (
 )
 
 var (
-	asKey  = canonicalMIMEHeaderKey([]byte("ARC-Seal"))
-	amsKey = canonicalMIMEHeaderKey([]byte("ARC-Message-signature"))
-	aarKey = canonicalMIMEHeaderKey([]byte("ARC-Authentication-Results"))
+	asKey  = "ARC-Seal"
+	amsKey = "ARC-Message-signature"
+	aarKey = "ARC-Authentication-Results"
 
 	errMissingArcFields      = errors.New("missing arc fields")
 	errInstanceMismatch      = errors.New("mismatch of arc header instances")
@@ -169,9 +169,9 @@ func VerifyArc(msg *Message) (*Result, error) {
 }
 
 func extractArcSets(headers MIMEHeader) ([]*arcSet, error) {
-	arcSeals := headers[asKey]
-	signatures := headers[amsKey]
-	results := headers[aarKey]
+	arcSeals := headers[canonicalMIMEHeaderKey([]byte(asKey))]
+	signatures := headers[canonicalMIMEHeaderKey([]byte(amsKey))]
+	results := headers[canonicalMIMEHeaderKey([]byte(aarKey))]
 
 	// Each arc-set must have exactly one of each header (seal, message signature and authentication results)
 	instances := len(arcSeals)

@@ -937,6 +937,7 @@ func (s *Signature) verify(m *Message, options ...VerifyOption) (result *Result)
 		_, _ = w.Write(canonicalizedHeader(h[0], h[1], s.RelaxedHeader))
 		_, _ = w.Write(crlf)
 	}
+
 	_, _ = w.Write(canonicalizedHeader(s.Header, s.emptyHashValue, s.RelaxedHeader))
 	//os.Stderr.WriteString("<<<\n")
 	hashed := s.algorithm.Sum(nil)

@@ -45,7 +45,7 @@ func TestVerifyArc(t *testing.T) {
 
 		for testName, test := range doc.Tests {
 			t.Run(fmt.Sprintf("%s", testName), func(t *testing.T) {
-				//if testName != "public_key_invalid" {
+				//if testName != "ams_fields_c_sr" {
 				//	t.Skip()
 				//}
 
@@ -53,6 +53,8 @@ func TestVerifyArc(t *testing.T) {
 				skipTests(t, testName, []string{
 					"as_format_inv_tag_key",
 					"as_format_tags_dup",
+					"ams_fields_c_sr",
+					"ams_fields_c_ss",
 				})
 
 				msg, err := ParseMessage(test.Message)
