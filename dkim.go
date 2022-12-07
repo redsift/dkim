@@ -160,13 +160,11 @@ func (e *VerificationError) MarshalJSON() ([]byte, error) {
 	return json.Marshal(&tmp)
 }
 
-// Possible reasons of failed verification
 var (
 	ErrUnacceptableKey             = errors.New("unacceptable key")
 	ErrBadSignature                = errors.New("bad signature")
 	ErrBodyHashMismatched          = errors.New("body hash mismatched")
 	ErrSignatureNotFound           = errors.New("signature not found")
-	ErrUnsupportedAlgorithm        = errors.New("unsupported algorithm")
 	ErrInputError                  = errors.New("input error")
 	ErrDomainMismatch              = errors.New("domain mismatch")
 	ErrSignatureExpired            = errors.New("signature expired")
@@ -176,7 +174,6 @@ var (
 	ErrTestingMode                 = errors.New("domain is testing DKIM")
 	ErrKeyRevoked                  = errors.New("key revoked")
 	errUnsupportedCanonicalization = errors.New("bad canonicalization")
-	errUnknownResultCode           = errors.New("unknown result code")
 )
 
 const (

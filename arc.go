@@ -10,12 +10,12 @@ var (
 	amsKey = "ARC-Message-signature"
 	aarKey = "ARC-Authentication-Results"
 
-	errMissingArcFields      = errors.New("missing arc fields")
-	errInstanceMismatch      = errors.New("mismatch of arc header instances")
-	errArcLimit              = errors.New("message over arc-set limit")
-	errMsgNotSigned          = errors.New("message is not arc signed")
-	errAMSValidationFailure  = errors.New("most recent ARC-Message-signature did not validate")
-	errAMSIncludesSealHeader = errors.New("Arc-Message-signature MUST NOT sign ARC-Seal")
+	ErrMissingArcFields      = errors.New("missing arc fields")
+	ErrInstanceMismatch      = errors.New("mismatch of arc header instances")
+	ErrArcLimit              = errors.New("message over arc-set limit")
+	ErrMsgNotSigned          = errors.New("message is not arc signed")
+	ErrAMSValidationFailure  = errors.New("most recent ARC-Message-signature did not validate")
+	ErrAMSIncludesSealHeader = errors.New("Arc-Message-signature MUST NOT sign ARC-Seal")
 
 	requiredAARTags = fInstance
 	requiredASTags  = fAlgorithm + fHash + fSignerDomain + fSelector + fInstance + fCv
@@ -42,7 +42,7 @@ type arcSet struct {
 func (s *arcSet) verify(instance int, msg *Message) (*arcResult, *VerificationError) {
 	if contains(s.messageSignature.Headers, "arc-seal") {
 		return nil, &VerificationError{
-			Err:    errAMSIncludesSealHeader,
+			Err:    ErrAMSIncludesSealHeader,
 			Source: VerifyError,
 			Tag:    "i",
 			Value:  strconv.Itoa(instance),
@@ -96,9 +96,9 @@ func VerifyArc(msg *Message) (*Result, error) {
 	l := len(arcSets)
 	switch {
 	case l == 0:
-		return &Result{Result: None, Error: &VerificationError{Source: VerifyError, Err: errMsgNotSigned}}, nil
+		return &Result{Result: None, Error: &VerificationError{Source: VerifyError, Err: ErrMsgNotSigned}}, nil
 	case l > 50:
-		return &Result{Result: Fail, Error: &VerificationError{Source: VerifyError, Err: errArcLimit}}, nil
+		return &Result{Result: Fail, Error: &VerificationError{Source: VerifyError, Err: ErrArcLimit}}, nil
 	}
 
 	// Verify each arc set starting at the most recent
@@ -176,7 +176,7 @@ func extractArcSets(headers MIMEHeader) ([]*arcSet, error) {
 	// Each arc-set must have exactly one of each header (seal, message signature and authentication results)
 	instances := len(arcSeals)
 	if (instances != len(signatures)) || (len(signatures) != len(results)) {
-		return nil, errMissingArcFields
+		return nil, ErrMissingArcFields
 	}
 
 	sets := make([]*arcSet, instances)
@@ -205,7 +205,7 @@ func extractArcSets(headers MIMEHeader) ([]*arcSet, error) {
 
 		// make sure instance values are aligned
 		if as.ArcInstance != ams.ArcInstance && ams.ArcInstance != aar.ArcInstance {
-			return nil, errInstanceMismatch
+			return nil, ErrInstanceMismatch
 		}
 
 		// use instance id as we want them in correct order
