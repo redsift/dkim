@@ -1121,7 +1121,6 @@ func (s *Signature) defaultGetHeaders(m *Message) [][]string {
 // Only used for arc, so only contains the used result codes
 // https://www.rfc-editor.org/rfc/rfc8617.html#section-4.4
 func extractResultCode(value string) ResultCode {
-	//todo: check if we need this bit
 	var s string
 	i := strings.Index(value, " ")
 	if i == -1 {
