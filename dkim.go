@@ -12,7 +12,6 @@ import (
 	"errors"
 	"hash"
 	"io"
-	"io/ioutil"
 	"net"
 	"regexp"
 	"strconv"
@@ -805,7 +804,7 @@ func (s *Signature) verifyBodyHash(rs io.ReadSeeker) (ResultCode, error) {
 		_, _ = rs.Seek(0, io.SeekStart)
 	}()
 
-	body, err := ioutil.ReadAll(rs)
+	body, err := io.ReadAll(rs)
 	if err != nil {
 		return 0, err
 	}

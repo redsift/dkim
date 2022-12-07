@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"strings"
 	"testing"
@@ -73,14 +72,7 @@ func TestVerifyArc(t *testing.T) {
 }
 
 func parseTests(file string) (docs []Document, err error) {
-	f, err := os.Open(file)
-	if err != nil {
-		return nil, err
-	}
-
-	defer f.Close()
-
-	source, err := ioutil.ReadAll(f)
+	source, err := os.ReadFile(file)
 	if err != nil {
 		return nil, err
 	}
