@@ -1,0 +1,51 @@
+name: go test
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - '*'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    if: "!contains(github.event.head_commit.message, '[ci skip]')"
+
+    steps:
+      - name: Check out code into the Go module directory
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v3
+        with:
+          go-version-file: go.mod
+
+      - name: Basic build
+        run: go build ./...
+
+      - name: Run tests and benchmarks with -race flag
+        run: go test -race -bench=. -benchtime=1x ./...
+
+      - name: Check that no tracked files in the repo have been modified
+        run: git diff --no-ext-diff --name-only --exit-code || (echo "Build/test modified the files above."; exit 1)
+
+      - name: Check that no files have been added to the repo
+        run: |
+          # Note: The "error: pathspec..." you see below is normal!
+          # In the success case in which there are no new untracked files,
+          # git ls-files complains about the pathspec not matching anything.
+          # That's OK. It's not worth the effort to suppress. Please ignore it.
+          if git ls-files --others --exclude-standard --directory --no-empty-directory --error-unmatch -- ':/*'
+          then
+            echo "Build/test created untracked files in the repo (file names above)."
+            exit 1
+          fi

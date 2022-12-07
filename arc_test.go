@@ -44,7 +44,7 @@ func TestVerifyArc(t *testing.T) {
 		}
 
 		for testName, test := range doc.Tests {
-			t.Run(fmt.Sprintf("%s", testName), func(t *testing.T) {
+			t.Run(testName, func(t *testing.T) {
 				// skip the following tests as we currently don't fail on duplicate on invalid tags
 				skipTests(t, testName, []string{
 					"as_format_inv_tag_key",

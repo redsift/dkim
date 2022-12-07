@@ -439,7 +439,7 @@ func parseSignature(k, folded, original string, required uint64) (*Signature, *V
 			acceptable := false
 			s.Headers = mapMatches(reSignedHeaders, value, func(m []string) string {
 				// m := [":v" "v"]
-				if "from" == strings.ToLower(m[1]) {
+				if strings.ToLower(m[1]) == "from" {
 					acceptable = true
 				}
 				return m[1]
