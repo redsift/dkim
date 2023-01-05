@@ -5,11 +5,13 @@ import (
 	"strconv"
 )
 
-var (
+const (
 	asKey  = "ARC-Seal"
 	amsKey = "ARC-Message-signature"
 	aarKey = "ARC-Authentication-Results"
+)
 
+var (
 	ErrMissingArcFields      = errors.New("missing arc fields")
 	ErrInstanceMismatch      = errors.New("mismatch of arc header instances")
 	ErrArcLimit              = errors.New("message over arc-set limit")
