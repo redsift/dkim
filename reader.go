@@ -135,7 +135,7 @@ func (r *Reader) ReadMIMEHeader() (MIMEHeader, error) {
 			// Most headers aren't multi-valued.
 			// Set the capacity on pairs[0] to 1, so any future append
 			// won't extend the slice
-			pairs = make([]KVPair, 1)
+			pairs = make([]KVPair, 1, 1)
 			pairs[0] = hdr
 			m[key] = pairs
 		} else {
