@@ -231,10 +231,15 @@ type Signature struct {
 	Selector         string            `json:"selector"`                // 's' tag value
 	Timestamp        time.Time         `json:"ts"`                      // 't' tag value as time.Time
 	Expiration       time.Time         `json:"exp"`                     // 'x' tag value as time.Time
-	ArcCV            ResultCode        `json:"arcCv"`                   // 'cv' tag, chain validation value for arc seal
 	CopiedHeaders    map[string]string `json:"copiedHeaders,omitempty"` // parsed 'z' tag value
 	query            PublicKeyQuery
 	canonicalization bool
+
+	// Arc related fields
+	ArcCV ResultCode `json:"arcCv"` // 'cv' tag, chain validation value for arc seal
+	Spf   ResultCode `json:"spf"`   // spf value for ARC-Authentication-Results
+	Dmarc ResultCode `json:"dmarc"` // dmarc value for ARC-Authentication-Results
+	Dkim  ResultCode `json:"dkim"`  // dkim value for ARC-Authentication-Results
 
 	getHeadersFunc func(msg *Message) [][]string
 }
@@ -519,6 +524,21 @@ func parseSignature(k, folded, original string, required uint64) (*Signature, *V
 				return badSignature("cv", value, expMalformedTagValue)
 			}
 			required &^= fCv
+		case "spf":
+			s.Spf = extractResultCode(value)
+			if s.Spf == 0 {
+				return badSignature("spf", value, expMalformedTagValue)
+			}
+		case "dmarc":
+			s.Dmarc = extractResultCode(value)
+			if s.Dmarc == 0 {
+				return badSignature("dmarc", value, expMalformedTagValue)
+			}
+		case "dkim":
+			s.Dkim = extractResultCode(value)
+			if s.Dkim == 0 {
+				return badSignature("dkim", value, expMalformedTagValue)
+			}
 		}
 	}
 	if required != 0 {

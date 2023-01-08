@@ -24,6 +24,25 @@ var (
 	requiredAMSTags = fAlgorithm + fHash + fBodyHash + fSignerDomain + fSelector + fInstance
 )
 
+type ArcResult struct {
+	// Final result of verification
+	Result
+
+	// Result data at each part of the chain until failure
+	Chain []ArcSetResult `json:"chain"`
+}
+
+// ArcSetResult holds the result data for verification of a single arc set
+type ArcSetResult struct {
+	Instance int        `json:"instance"`
+	Spf      ResultCode `json:"spf"`
+	Dkim     ResultCode `json:"dkim"`
+	Dmarc    ResultCode `json:"dmarc"`
+	AMSValid bool       `json:"ams-vaild"`
+	ASValid  bool       `json:"as-valid"`
+	CV       ResultCode `json:"cv"`
+}
+
 type arcResult struct {
 	instance int
 	amsValid bool
@@ -82,14 +101,14 @@ func (s *Signature) isArc() bool {
 // VerifyArc
 //
 // https://www.rfc-editor.org/rfc/rfc8617.html#section-5.2
-func VerifyArc(msg *Message) (*Result, error) {
+func VerifyArc(msg *Message) (*ArcResult, error) {
 	if msg == nil || len(msg.Header) == 0 || msg.Body == nil {
-		return &Result{Result: None}, nil
+		return &ArcResult{Result: Result{Result: None}}, nil
 	}
 
 	arcSets, err := extractArcSets(msg.Header)
 	if err != nil {
-		return &Result{Result: Fail, Error: &VerificationError{Source: VerifyError, Err: err}}, nil
+		return &ArcResult{Result: Result{Result: Fail, Error: &VerificationError{Source: VerifyError, Err: err}}}, nil
 	}
 
 	//	"The maximum number of ARC Sets that can be attached to a
@@ -98,13 +117,15 @@ func VerifyArc(msg *Message) (*Result, error) {
 	l := len(arcSets)
 	switch {
 	case l == 0:
-		return &Result{Result: None, Error: &VerificationError{Source: VerifyError, Err: ErrMsgNotSigned}}, nil
+		return &ArcResult{Result: Result{Result: None, Error: &VerificationError{Source: VerifyError, Err: ErrMsgNotSigned}}}, nil
 	case l > 50:
-		return &Result{Result: Fail, Error: &VerificationError{Source: VerifyError, Err: ErrArcLimit}}, nil
+		return &ArcResult{Result: Result{Result: Fail, Error: &VerificationError{Source: VerifyError, Err: ErrArcLimit}}}, nil
 	}
 
 	// Verify each arc set starting at the most recent
 	var results []arcResult
+	var chain []ArcSetResult
+
 	for i := len(arcSets) - 1; i != -1; i-- {
 		// Returns all the arc headers up until 'instance', in the correct order.
 		// Headers are used to produce arc-seal signature.
@@ -130,18 +151,29 @@ func VerifyArc(msg *Message) (*Result, error) {
 
 		res, err := arcSets[i].verify(i+1, msg)
 		if err != nil {
-			return &Result{Result: Fail, Error: &VerificationError{Source: VerifyError, Err: err}}, nil
+			return &ArcResult{Result: Result{Result: Fail, Error: &VerificationError{Source: VerifyError, Err: err}}, Chain: chain}, nil
 		}
+
+		chain = append(chain, ArcSetResult{
+			Instance: res.instance,
+			Spf:      arcSets[i].authenticationResults.Spf,
+			Dkim:     arcSets[i].authenticationResults.Dkim,
+			Dmarc:    arcSets[i].authenticationResults.Dmarc,
+			AMSValid: res.amsValid,
+			ASValid:  res.asValid,
+			CV:       res.cv,
+		})
+
 		results = append(results, *res)
 	}
 
-	arcResult := func(result ResultCode, msg string, i int) *Result {
-		return &Result{Result: Fail, Error: &VerificationError{
+	arcResult := func(result ResultCode, msg string, i int) *ArcResult {
+		return &ArcResult{Result: Result{Result: Fail, Error: &VerificationError{
 			Source:      VerifyError,
 			Explanation: msg,
 			Tag:         "i",
 			Value:       strconv.Itoa(i),
-		}}
+		}}, Chain: chain}
 	}
 
 	if !results[0].amsValid {
@@ -167,7 +199,7 @@ func VerifyArc(msg *Message) (*Result, error) {
 		}
 	}
 
-	return &Result{Result: Pass}, nil
+	return &ArcResult{Result: Result{Result: Pass}, Chain: chain}, nil
 }
 
 func extractArcSets(headers MIMEHeader) ([]*arcSet, error) {

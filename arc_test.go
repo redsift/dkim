@@ -63,7 +63,7 @@ func TestVerifyArc(t *testing.T) {
 					fmt.Println(err)
 				}
 
-				if result.Result.String() != strings.ToLower(test.CV) {
+				if result.Result.Result.String() != strings.ToLower(test.CV) {
 					t.Errorf("VerifyArc() got=%v, want=%s", result.Result.String(), test.CV)
 				}
 			})
