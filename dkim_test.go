@@ -3,10 +3,10 @@ package dkim
 import (
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"reflect"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -61,8 +61,8 @@ func TestDnsTxtPublicKeyQuery(t *testing.T) {
 	}
 
 	sigs := map[string]*Signature{
-		"highgrade":        {Selector: "highgrade", SignerDomain: "guerrillamail.com"},
-		"20161025":         {Selector: "20161025", SignerDomain: "1e100.net"},
+		"highgrade": {Selector: "highgrade", SignerDomain: "guerrillamail.com"},
+		//"20161025":         {Selector: "20161025", SignerDomain: "1e100.net"},
 		"temperror":        {Selector: "temperror", SignerDomain: "example.com"},
 		"untrimmed-domain": {Selector: "20161025", SignerDomain: " 1e100.net "},
 	}
@@ -74,7 +74,8 @@ func TestDnsTxtPublicKeyQuery(t *testing.T) {
 		e    error
 	}{
 		{"highgrade", sigs["highgrade"], mustKey("highgrade", "guerrillamail.com"), nil},
-		{"20161025", sigs["20161025"], mustKey("20161025", "1e100.net"), nil},
+		// skipped as dns record no longer contains public key
+		//{"20161025", sigs["20161025"], mustKey("20161025", "1e100.net"), nil},
 		{"temperror", sigs["temperror"], nil, ErrKeyUnavailable},
 	}
 
@@ -159,6 +160,9 @@ func TestParsePublicKey(t *testing.T) {
 }
 
 func compareSignatures(l, r *Signature) bool {
+	l.getHeadersFunc = nil
+	r.getHeadersFunc = nil
+
 	if l == r {
 		return true
 	}
@@ -227,7 +231,8 @@ func TestParseSignature_Valid(t *testing.T) {
 					"Subject": "demo=20run",
 					"Date":    "July=205,=202005=203:44:08=20PM=20-0700",
 				},
-				query: Queries[qDNSTxt],
+				canonicalization: true,
+				query:            Queries[qDNSTxt],
 			},
 			false,
 		},
@@ -282,6 +287,7 @@ func TestParseSignature_Valid(t *testing.T) {
 					"Subject": "demo=20run",
 					"Date":    "July=205,=202005=203:44:08=20PM=20-0700",
 				},
+				canonicalization: true,
 			},
 			false,
 		},
@@ -293,7 +299,7 @@ func TestParseSignature_Valid(t *testing.T) {
 			continue
 		}
 		t.Run(fmt.Sprintf("%d_%s", testNo, test.name), func(t *testing.T) {
-			got, err := parseSignature("DKIM-Signature", test.raw, test.raw)
+			got, err := parseSignature("DKIM-Signature", test.raw, test.raw, requiredTags)
 			if test.wantErr != (err != nil) {
 				t.Errorf("parseSignature() err=%v, wantErr=%t", err, test.wantErr)
 			}
@@ -351,7 +357,7 @@ func TestParseSignature_Errors(t *testing.T) {
 			continue
 		}
 		t.Run(fmt.Sprintf("%d", testNo), func(t *testing.T) {
-			_, got := parseSignature("DKIM-Signature", test.raw, test.raw)
+			_, got := parseSignature("DKIM-Signature", test.raw, test.raw, requiredTags)
 			if !reflect.DeepEqual(got, test.want) {
 				t.Errorf("parseSignature()\n\tgot =\"%#v\"\n\twant=\"%#v\"", got, test.want)
 			}
@@ -405,7 +411,7 @@ func TestVerify(t *testing.T) {
 			defer f.Close()
 
 			var (
-				b, _ = ioutil.ReadAll(f)
+				b, _ = io.ReadAll(f)
 				m    *Message
 				e    error
 			)
@@ -675,7 +681,8 @@ func TestGetHeaderFunc(t *testing.T) {
 func TestVerify_Concurrent(t *testing.T) {
 	m := &sync.Mutex{}
 	c := sync.NewCond(m)
-	ready := false
+
+	var ready int64
 
 	wg := sync.WaitGroup{}
 	for _, f := range []string{
@@ -703,13 +710,13 @@ func TestVerify_Concurrent(t *testing.T) {
 			defer r.Close()
 
 			c.L.Lock()
-			for !ready {
+			for atomic.LoadInt64(&ready) == 0 {
 				c.Wait()
 			}
 			c.L.Unlock()
 
 			var (
-				b, _ = ioutil.ReadAll(r)
+				b, _ = io.ReadAll(r)
 				m    *Message
 			)
 			m, err = ParseMessage(string(b))
@@ -723,7 +730,7 @@ func TestVerify_Concurrent(t *testing.T) {
 			)
 		}(f, c)
 	}
-	ready = true
+	atomic.StoreInt64(&ready, 1)
 	c.Broadcast()
 	wg.Wait()
 }

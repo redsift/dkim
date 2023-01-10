@@ -12,7 +12,6 @@ import (
 	"errors"
 	"hash"
 	"io"
-	"io/ioutil"
 	"net"
 	"regexp"
 	"strconv"
@@ -160,13 +159,11 @@ func (e *VerificationError) MarshalJSON() ([]byte, error) {
 	return json.Marshal(&tmp)
 }
 
-// Possible reasons of failed verification
 var (
 	ErrUnacceptableKey             = errors.New("unacceptable key")
 	ErrBadSignature                = errors.New("bad signature")
 	ErrBodyHashMismatched          = errors.New("body hash mismatched")
 	ErrSignatureNotFound           = errors.New("signature not found")
-	ErrUnsupportedAlgorithm        = errors.New("unsupported algorithm")
 	ErrInputError                  = errors.New("input error")
 	ErrDomainMismatch              = errors.New("domain mismatch")
 	ErrSignatureExpired            = errors.New("signature expired")
@@ -191,6 +188,7 @@ const (
 	expEmptyUserIdentity    = "empty user identity"
 	expNotDecimalNumber     = "not a decimal number"
 	expEmptySelector        = "empty selector"
+	expBadinstance          = "bad instance"
 )
 
 const (
@@ -216,24 +214,34 @@ func (id AlgorithmID) MarshalText() ([]byte, error) {
 
 // Signature holds parsed DKIM signature
 type Signature struct {
-	Header         string `json:"header"` // Header of the signature
-	Raw            string `json:"raw"`    // Raw value of the signature
-	emptyHashValue string
-	algorithm      hash.Hash
-	AlgorithmID    AlgorithmID       `json:"algorithmId"`             // 3 (SHA1) or 5 (SHA256)
-	Hash           []byte            `json:"hash"`                    // 'h' tag value
-	BodyHash       []byte            `json:"bodyHash"`                // 'bh' tag value
-	RelaxedHeader  bool              `json:"relaxedHeader"`           // header canonicalization algorithm
-	RelaxedBody    bool              `json:"relaxedBody"`             // body canonicalization algorithm
-	SignerDomain   string            `json:"signerDomain"`            // 'd' tag value
-	Headers        []string          `json:"headers"`                 // parsed 'h' tag value
-	UserIdentifier string            `json:"userId"`                  // 'i' tag value
-	Length         int64             `json:"length"`                  // 'l' tag value
-	Selector       string            `json:"selector"`                // 's' tag value
-	Timestamp      time.Time         `json:"ts"`                      // 't' tag value as time.Time
-	Expiration     time.Time         `json:"exp"`                     // 'x' tag value as time.Time
-	CopiedHeaders  map[string]string `json:"copiedHeaders,omitempty"` // parsed 'z' tag value
-	query          PublicKeyQuery
+	Header           string `json:"header"` // Header of the signature
+	Raw              string `json:"raw"`    // Raw value of the signature
+	emptyHashValue   string
+	algorithm        hash.Hash
+	AlgorithmID      AlgorithmID       `json:"algorithmId"`             // 3 (SHA1) or 5 (SHA256)
+	Hash             []byte            `json:"hash"`                    // 'h' tag value
+	BodyHash         []byte            `json:"bodyHash"`                // 'bh' tag value
+	RelaxedHeader    bool              `json:"relaxedHeader"`           // header canonicalization algorithm
+	RelaxedBody      bool              `json:"relaxedBody"`             // body canonicalization algorithm
+	SignerDomain     string            `json:"signerDomain"`            // 'd' tag value
+	Headers          []string          `json:"headers"`                 // parsed 'h' tag value
+	UserIdentifier   string            `json:"userId"`                  // 'i' tag value
+	ArcInstance      int               `json:"arcInstance"`             // 'i' tag value (only in arc headers)
+	Length           int64             `json:"length"`                  // 'l' tag value
+	Selector         string            `json:"selector"`                // 's' tag value
+	Timestamp        time.Time         `json:"ts"`                      // 't' tag value as time.Time
+	Expiration       time.Time         `json:"exp"`                     // 'x' tag value as time.Time
+	CopiedHeaders    map[string]string `json:"copiedHeaders,omitempty"` // parsed 'z' tag value
+	query            PublicKeyQuery
+	canonicalization bool
+
+	// Arc related fields
+	ArcCV ResultCode `json:"arcCv"` // 'cv' tag, chain validation value for arc seal
+	Spf   ResultCode `json:"spf"`   // spf value for ARC-Authentication-Results
+	Dmarc ResultCode `json:"dmarc"` // dmarc value for ARC-Authentication-Results
+	Dkim  ResultCode `json:"dkim"`  // dkim value for ARC-Authentication-Results
+
+	getHeadersFunc func(msg *Message) [][]string
 }
 
 // PublicKey holds parsed public key
@@ -313,27 +321,30 @@ func decodeBase64(s string) ([]byte, error) {
 	return base64.StdEncoding.DecodeString(strings.Replace(s, " ", "", -1))
 }
 
-func parseSignature(k, folded, original string) (*Signature, *VerificationError) {
+const (
+	fVersion uint64 = 1 << iota
+	fAlgorithm
+	fHash
+	fBodyHash
+	fSignerDomain
+	fHeaders
+	fSelector
+	fInstance
+	fCv
+)
+
+var requiredTags = fVersion + fAlgorithm + fHash + fBodyHash + fSignerDomain + fHeaders + fSelector
+
+func parseSignature(k, folded, original string, required uint64) (*Signature, *VerificationError) {
 	if folded == "" || original == "" {
 		return nil, &VerificationError{Source: VerifyError, Err: ErrSignatureNotFound}
 	}
 
-	const (
-		fVersion uint64 = 1 << iota
-		fAlgorithm
-		fHash
-		fBodyHash
-		fSignerDomain
-		fHeaders
-		fSelector
-	)
-
-	required := fVersion + fAlgorithm + fHash + fBodyHash + fSignerDomain + fHeaders + fSelector
 	missedTags := func() string {
-		symbols := []string{"v", "a", "b", "bh", "d", "h", "s"}
+		symbols := []string{"v", "a", "b", "bh", "d", "h", "s", "i", "cv"}
 		var w bytes.Buffer
 		w.WriteString("no required tags found (")
-		for f, i, d := fVersion, 0, false; f <= fSelector; f, i = f<<1, i+1 {
+		for f, i, d := fVersion, 0, false; f <= fCv; f, i = f<<1, i+1 {
 			if (required & f) == 0 {
 				continue
 			}
@@ -358,6 +369,7 @@ func parseSignature(k, folded, original string) (*Signature, *VerificationError)
 		// https://tools.ietf.org/html/rfc6376#page-30
 		emptyHashValue: reBTagOnly.ReplaceAllString(original, "$1"),
 	}
+	s.getHeadersFunc = s.defaultGetHeaders
 
 	badSignature := func(t, v string, exp string) (*Signature, *VerificationError) {
 		return nil, &VerificationError{
@@ -398,6 +410,7 @@ func parseSignature(k, folded, original string) (*Signature, *VerificationError)
 			}
 			required &^= fBodyHash
 		case "c":
+			s.canonicalization = true
 			m := reCanonicalization.FindAllStringSubmatch(value, 1)
 			// m := [["headerAlgorigthm/bodyAlgorithm" "headerAlgorigthm" "bodyAlgorithm"]]
 			if m == nil {
@@ -430,7 +443,7 @@ func parseSignature(k, folded, original string) (*Signature, *VerificationError)
 			acceptable := false
 			s.Headers = mapMatches(reSignedHeaders, value, func(m []string) string {
 				// m := [":v" "v"]
-				if "from" == strings.ToLower(m[1]) {
+				if strings.ToLower(m[1]) == "from" {
 					acceptable = true
 				}
 				return m[1]
@@ -450,7 +463,18 @@ func parseSignature(k, folded, original string) (*Signature, *VerificationError)
 			if value == "" {
 				return badSignature("i", "", expEmptyUserIdentity)
 			}
-			s.UserIdentifier = value
+
+			// i is for instance in arc
+			switch s.Header {
+			case asKey, amsKey, aarKey:
+				s.ArcInstance, err = strconv.Atoi(value)
+				if err != nil || s.ArcInstance == 0 {
+					return badSignature("i", "", expBadinstance)
+				}
+				required &^= fInstance
+			default:
+				s.UserIdentifier = value
+			}
 		case "l":
 			if s.Length, err = strconv.ParseInt(value, 10, 64); err != nil {
 				return badSignature("l", value, expNotDecimalNumber)
@@ -493,6 +517,27 @@ func parseSignature(k, folded, original string) (*Signature, *VerificationError)
 			for _, m := range hdrs {
 				// m := ["t:v" "t" "v"]
 				s.CopiedHeaders[m[1]] = m[2]
+			}
+		case "cv":
+			s.ArcCV = extractResultCode(value)
+			if s.ArcCV == 0 {
+				return badSignature("cv", value, expMalformedTagValue)
+			}
+			required &^= fCv
+		case "spf":
+			s.Spf = extractResultCode(value)
+			if s.Spf == 0 {
+				return badSignature("spf", value, expMalformedTagValue)
+			}
+		case "dmarc":
+			s.Dmarc = extractResultCode(value)
+			if s.Dmarc == 0 {
+				return badSignature("dmarc", value, expMalformedTagValue)
+			}
+		case "dkim":
+			s.Dkim = extractResultCode(value)
+			if s.Dkim == 0 {
+				return badSignature("dkim", value, expMalformedTagValue)
 			}
 		}
 	}
@@ -775,11 +820,17 @@ func parsePublicKey(s string) (*PublicKey, error) {
 }
 
 func (s *Signature) verifyBodyHash(rs io.ReadSeeker) (ResultCode, error) {
-	defer func(offset int64, _ error) {
-		_, _ = rs.Seek(offset, io.SeekStart)
-	}(rs.Seek(0, io.SeekCurrent))
+	defer func() {
+		_, _ = rs.Seek(0, io.SeekStart)
+	}()
 
-	var r io.Reader = rs
+	body, err := io.ReadAll(rs)
+	if err != nil {
+		return 0, err
+	}
+
+	var r io.Reader
+	r = bytes.NewReader(body)
 	// In Hash step 1, the Signer/Verifier MUST Hash the message body,
 	// canonicalized using the body canonicalization algorithm specified
 	// in the "c=" tag and then truncated to the Length specified in the "l=" tag.
@@ -836,11 +887,10 @@ func (s *Signature) verify(m *Message, options ...VerifyOption) (result *Result)
 	}
 
 	pkey, err := s.query(s)
-
-	switch err {
-	case nil: // no errors
-	case ErrKeyUnavailable:
+	switch {
+	case err == ErrKeyUnavailable || pkey == nil:
 		return newResult(Temperror, wrapErr(ErrKeyUnavailable, "", "s"), s, nil)
+	case err == nil: // no errors
 	default: // others
 		if e, ok := err.(*VerificationError); ok {
 			return newResult(Permerror, e, s, nil)
@@ -858,8 +908,10 @@ func (s *Signature) verify(m *Message, options ...VerifyOption) (result *Result)
 		return newResult(None, wrapErr(ErrUnacceptableKey, ErrTestingMode.Error(), "s"), s, nil)
 	}
 
-	if ok := compareDomains(s.UserIdentifier, s.SignerDomain, pkey.Strict); !ok {
-		return newResult(Permerror, wrapErr(ErrDomainMismatch, "", "d"), s, nil)
+	if !s.isArc() {
+		if ok := compareDomains(s.UserIdentifier, s.SignerDomain, pkey.Strict); !ok {
+			return newResult(Permerror, wrapErr(ErrDomainMismatch, "", "d"), s, nil)
+		}
 	}
 
 	// Fail fast here, provided options are fast
@@ -869,14 +921,11 @@ func (s *Signature) verify(m *Message, options ...VerifyOption) (result *Result)
 		}
 	}
 
-	body, err := ioutil.ReadAll(m.Body)
-	if err != nil {
-		return newResult(None, wrapErr(ErrInputError, err.Error(), "bh"), s, pkey)
-
-	}
-
-	if code, err := s.verifyBodyHash(bytes.NewReader(body)); err != nil {
-		return newResult(code, wrapErr(ErrBadSignature, err.Error(), "bh"), s, pkey)
+	// no body hash in arc seal
+	if s.Header != asKey {
+		if code, err := s.verifyBodyHash(m.Body); err != nil {
+			return newResult(code, wrapErr(ErrBadSignature, err.Error(), "bh"), s, pkey)
+		}
 	}
 
 	// In Hash step 2, the Signer/Verifier MUST pass the following to the
@@ -896,20 +945,15 @@ func (s *Signature) verify(m *Message, options ...VerifyOption) (result *Result)
 
 	// 5.4.2.  Signatures Involving Multiple Instances of a Field
 	// https://tools.ietf.org/html/rfc6376#section-5.4.2
-	getHeader := getHeaderFunc(m.Header, s.RelaxedHeader)
 
 	s.algorithm.Reset()
 	w := s.algorithm
-	//w := io.MultiWriter(s.algorithm, os.Stderr)
-	//os.Stderr.WriteString(">>>")
-	for _, k := range s.Headers {
-		origK, v, found := getHeader(k)
-		if !found {
-			continue
-		}
-		_, _ = w.Write(canonicalizedHeader(origK, v, s.RelaxedHeader))
+
+	for _, h := range s.getHeadersFunc(m) {
+		_, _ = w.Write(canonicalizedHeader(h[0], h[1], s.RelaxedHeader))
 		_, _ = w.Write(crlf)
 	}
+
 	_, _ = w.Write(canonicalizedHeader(s.Header, s.emptyHashValue, s.RelaxedHeader))
 	//os.Stderr.WriteString("<<<\n")
 	hashed := s.algorithm.Sum(nil)
@@ -1029,7 +1073,7 @@ func Verify(hdr string, msg *Message, opts ...VerifyOption) ([]*Result, error) {
 		if _, err := msg.Body.Seek(0, io.SeekStart); err != nil {
 			r = &Result{Result: Temperror, Error: &VerificationError{Err: err, Explanation: "internal error (seek to 0 failed)"}}
 		} else {
-			if s, err := parseSignature(hdr, raw.Folded, raw.Original); err != nil {
+			if s, err := parseSignature(hdr, raw.Folded, raw.Original, requiredTags); err != nil {
 				r = newResult(Permerror, err, s, nil)
 			} else {
 				r = s.verify(msg, opts...)
@@ -1075,4 +1119,43 @@ func (r *Result) String() string {
 	}
 
 	return w.String()
+}
+
+func (s *Signature) defaultGetHeaders(m *Message) [][]string {
+	getHeader := getHeaderFunc(m.Header, s.RelaxedHeader)
+
+	var res [][]string
+	for _, k := range s.Headers {
+		origK, v, found := getHeader(k)
+		if !found {
+			continue
+		}
+
+		res = append(res, []string{origK, v})
+	}
+
+	return res
+}
+
+// Only used for arc, so only contains the used result codes
+// https://www.rfc-editor.org/rfc/rfc8617.html#section-4.4
+func extractResultCode(value string) ResultCode {
+	var s string
+	i := strings.Index(value, " ")
+	if i == -1 {
+		s = value
+	} else {
+		s = value[0:i]
+	}
+
+	switch s {
+	case "none":
+		return None
+	case "pass":
+		return Pass
+	case "fail":
+		return Fail
+	default:
+		return 0
+	}
 }
