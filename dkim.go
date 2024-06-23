@@ -659,7 +659,7 @@ func _DNSTxtPublicKeyQuery(s *Signature) (*PublicKey, error) {
 		return nil, ErrKeyUnavailable
 	}
 
-	key, err := parsePublicKey(strings.Join(records, ""))
+	key, err := ParsePublicKey(strings.Join(records, ""))
 	if err != nil {
 		return nil, err
 	}
@@ -683,9 +683,9 @@ func mapMatches(re *regexp.Regexp, s string, f func(g []string) string) []string
 	return a
 }
 
-// parsePublicKey parses textual representation of the key
+// ParsePublicKey parses textual representation of the key
 // See https://tools.ietf.org/html/rfc6376#section-3.6.1 for details
-func parsePublicKey(s string) (*PublicKey, error) {
+func ParsePublicKey(s string) (*PublicKey, error) {
 	unacceptableKey := func(t, v string, s string) (*PublicKey, error) {
 		return nil, &VerificationError{
 			Source:      KeyError,

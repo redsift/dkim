@@ -37,7 +37,7 @@ func CachedPublicKeyQuery(s *Signature) (*PublicKey, error) {
 	if c.k != nil || c.e != nil {
 		return c.k, c.e
 	}
-	k, e := parsePublicKey(c.s)
+	k, e := ParsePublicKey(c.s)
 	entry := &cacheEntry{k: k, e: e}
 	cache[n] = entry
 	return entry.k, nil
@@ -148,12 +148,12 @@ func TestParsePublicKey(t *testing.T) {
 			continue
 		}
 		t.Run(fmt.Sprintf("%d_%s", testNo, test.name), func(t *testing.T) {
-			key, err := parsePublicKey(test.raw)
+			key, err := ParsePublicKey(test.raw)
 			if !reflect.DeepEqual(err, test.wantErr) {
-				t.Errorf("parsePublicKey()\n\t    err=\"%v\"\n\twantErr=\"%v\"", err, test.wantErr)
+				t.Errorf("ParsePublicKey()\n\t    err=\"%v\"\n\twantErr=\"%v\"", err, test.wantErr)
 			}
 			if !reflect.DeepEqual(key, test.wantKey) {
-				t.Errorf("parsePublicKey()\n\t    key=\"%#v\"\n\twantKey=\"%#v\"", key, test.wantKey)
+				t.Errorf("ParsePublicKey()\n\t    key=\"%#v\"\n\twantKey=\"%#v\"", key, test.wantKey)
 			}
 		})
 	}
