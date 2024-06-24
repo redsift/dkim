@@ -246,18 +246,18 @@ type Signature struct {
 
 // PublicKey holds parsed public key
 type PublicKey struct {
-	Raw        string   `json:"raw,omitempty"`        // raw value of the key record
-	Version    string   `json:"version,omitempty"`    // 'v' tag value
-	KeyType    string   `json:"key_type,omitempty"`   // 'k' tag value
-	Data       []byte   `json:"key,omitempty"`        // 'p' tag value
-	Algorithms []string `json:"algorithms,omitempty"` // parsed 'h' tag value; [] means "allowing all"
-	Services   []string `json:"services,omitempty"`   // parsed 's' tag value; [] is "*"
-	Flags      []string `json:"flags,omitempty"`      // parsed 't' tag value
-	Notes      string   `json:"notes,omitempty"`      // 'n' tag value
-	Testing    bool     `json:"testing"`              // 't' contains 'y'
-	Strict     bool     `json:"strict"`               // 't' contains 's'
-	revoked    bool
-	key        *rsa.PublicKey // supporting "rsa" only
+	Raw        string         `json:"raw,omitempty"`        // raw value of the key record
+	Version    string         `json:"version,omitempty"`    // 'v' tag value
+	KeyType    string         `json:"key_type,omitempty"`   // 'k' tag value
+	Data       []byte         `json:"key,omitempty"`        // 'p' tag value
+	Algorithms []string       `json:"algorithms,omitempty"` // parsed 'h' tag value; [] means "allowing all"
+	Services   []string       `json:"services,omitempty"`   // parsed 's' tag value; [] is "*"
+	Flags      []string       `json:"flags,omitempty"`      // parsed 't' tag value
+	Notes      string         `json:"notes,omitempty"`      // 'n' tag value
+	Testing    bool           `json:"testing"`              // 't' contains 'y'
+	Strict     bool           `json:"strict"`               // 't' contains 's'
+	Revoked    bool           `json:"-"`
+	Key        *rsa.PublicKey `json:"-"` // supporting "rsa" only
 }
 
 const qDNSTxt = "dns/txt"
@@ -720,7 +720,7 @@ func ParsePublicKey(s string) (*PublicKey, error) {
 		w.WriteByte(')')
 		return w.String()
 	}
-	k := &PublicKey{revoked: true, Raw: s}
+	k := &PublicKey{Revoked: true, Raw: s}
 	for _, m := range reTagValueList.FindAllStringSubmatch(s, -1) {
 		// m := ["t=v" "t" "v"]
 		key, value := m[1], m[2]
@@ -768,7 +768,7 @@ func ParsePublicKey(s string) (*PublicKey, error) {
 				}
 				k.Data = b
 				if k.KeyType == "ed25519" {
-					k.revoked = false
+					k.Revoked = false
 					return k, nil
 				}
 				i, err := x509.ParsePKIXPublicKey(b)
@@ -780,8 +780,8 @@ func ParsePublicKey(s string) (*PublicKey, error) {
 					// should not happen
 					return unacceptableKey("p", value, "internal error")
 				}
-				k.key = pkey
-				k.revoked = false
+				k.Key = pkey
+				k.Revoked = false
 			}
 			required &^= fData
 		case "s": // Service Type
@@ -898,7 +898,7 @@ func (s *Signature) verify(m *Message, options ...VerifyOption) (result *Result)
 		return newResult(Permerror, wrapErr(ErrUnacceptableKey, err.Error(), "s"), s, nil)
 	}
 
-	if pkey.revoked {
+	if pkey.Revoked {
 		return newResult(Fail, wrapErr(ErrUnacceptableKey, ErrKeyRevoked.Error(), "s"), s, nil)
 	}
 
@@ -964,7 +964,7 @@ func (s *Signature) verify(m *Message, options ...VerifyOption) (result *Result)
 		}
 		return newResult(Pass, nil, s, pkey)
 	}
-	if err := rsa.VerifyPKCS1v15(pkey.key, crypto.Hash(s.AlgorithmID), hashed[:], s.Hash); err != nil {
+	if err := rsa.VerifyPKCS1v15(pkey.Key, crypto.Hash(s.AlgorithmID), hashed[:], s.Hash); err != nil {
 		return newResult(Fail, wrapErr(ErrBadSignature, err.Error(), "b"), s, pkey)
 	}
 
