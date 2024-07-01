@@ -37,7 +37,7 @@ func CachedPublicKeyQuery(s *Signature) (*PublicKey, error) {
 	if c.k != nil || c.e != nil {
 		return c.k, c.e
 	}
-	k, e := parsePublicKey(c.s)
+	k, e := ParsePublicKey(c.s)
 	entry := &cacheEntry{k: k, e: e}
 	cache[n] = entry
 	return entry.k, nil
@@ -124,15 +124,15 @@ func TestParsePublicKey(t *testing.T) {
 		{"wrong type",
 			"k=des", nil, unacceptableKey("k", "des", expUnsupportedAlgorithm)},
 		{"revoked",
-			"p=", &PublicKey{Raw: "p=", revoked: true}, nil},
+			"p=", &PublicKey{Raw: "p=", Revoked: true}, nil},
 		{"wrong data",
 			"p==", nil, unacceptableKey("p", "=", "illegal base64 data at input byte 0")},
 		{"not a key",
 			"p=MAMA", nil, unacceptableKey("p", "MAMA", "asn1: syntax error: data truncated")},
 		{"revoked testing strict",
-			"p=; t=y:\n\ts", &PublicKey{Raw: "p=; t=y:\n\ts", Flags: []string{"y", "s"}, revoked: true, Testing: true, Strict: true}, nil},
+			"p=; t=y:\n\ts", &PublicKey{Raw: "p=; t=y:\n\ts", Flags: []string{"y", "s"}, Revoked: true, Testing: true, Strict: true}, nil},
 		{"x-teleport",
-			"p=; s=*:email:x-teleport", &PublicKey{Raw: "p=; s=*:email:x-teleport", revoked: true, Services: []string{"*", "email", "x-teleport"}}, nil},
+			"p=; s=*:email:x-teleport", &PublicKey{Raw: "p=; s=*:email:x-teleport", Revoked: true, Services: []string{"*", "email", "x-teleport"}}, nil},
 		{"no services listed",
 			"p=; s=x-teleport", nil, unacceptableKey("s", "x-teleport", expUnsupportedServices)},
 		{"key with ws", `k=rsa; p=  NDM1NWE0Nm
@@ -148,12 +148,12 @@ func TestParsePublicKey(t *testing.T) {
 			continue
 		}
 		t.Run(fmt.Sprintf("%d_%s", testNo, test.name), func(t *testing.T) {
-			key, err := parsePublicKey(test.raw)
+			key, err := ParsePublicKey(test.raw)
 			if !reflect.DeepEqual(err, test.wantErr) {
-				t.Errorf("parsePublicKey()\n\t    err=\"%v\"\n\twantErr=\"%v\"", err, test.wantErr)
+				t.Errorf("ParsePublicKey()\n\t    err=\"%v\"\n\twantErr=\"%v\"", err, test.wantErr)
 			}
 			if !reflect.DeepEqual(key, test.wantKey) {
-				t.Errorf("parsePublicKey()\n\t    key=\"%#v\"\n\twantKey=\"%#v\"", key, test.wantKey)
+				t.Errorf("ParsePublicKey()\n\t    key=\"%#v\"\n\twantKey=\"%#v\"", key, test.wantKey)
 			}
 		})
 	}
