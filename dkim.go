@@ -10,6 +10,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"hash"
 	"io"
 	"net"
@@ -18,6 +19,8 @@ import (
 	"strings"
 	"time"
 )
+
+const MinRSAKeyLen = 1024
 
 // Result holds all details about result of DKIM signature verification
 type Result struct {
@@ -173,10 +176,20 @@ var (
 	ErrTestingMode                 = errors.New("domain is testing DKIM")
 	ErrKeyRevoked                  = errors.New("key revoked")
 	errUnsupportedCanonicalization = errors.New("bad canonicalization")
+	ErrEmptyRecord                 = errors.New("empty record")
+	ErrUnsupportedVersion          = errors.New("unsupported version")
+	ErrUnsupportedAlgorithm        = errors.New("unsupported algorithm")
+	ErrDecodeBase64                = errors.New("decode base64")
+	ErrParsePublicKey              = errors.New("parse public key")
+	ErrUnsupportedServices         = errors.New("unsupported services")
+	ErrMissedPTag                  = errors.New("missing p-tag")
+	ErrWeakRSAKey                  = errors.New("weak RSA key")
+	ErrInvalidED25519Key           = errors.New("invalid ed25519 key")
 )
 
 const (
 	expEmptyKey             = "empty key"
+	expEmptyRecord          = "empty record"
 	expUnsupportedVersion   = "unsupported version"
 	expUnsupportedAlgorithm = "unsupported algorithm"
 	expUnsupportedServices  = "no supported services listed"
@@ -659,9 +672,9 @@ func _DNSTxtPublicKeyQuery(s *Signature) (*PublicKey, error) {
 		return nil, ErrKeyUnavailable
 	}
 
-	key, err := ParsePublicKey(strings.Join(records, ""))
-	if err != nil {
-		return nil, err
+	key, errs := ParsePublicKey(strings.Join(records, ""))
+	if len(errs) > 0 {
+		return nil, errors.Join(errs...)
 	}
 
 	return key, nil
@@ -683,43 +696,35 @@ func mapMatches(re *regexp.Regexp, s string, f func(g []string) string) []string
 	return a
 }
 
-// ParsePublicKey parses textual representation of the key
-// See https://tools.ietf.org/html/rfc6376#section-3.6.1 for details
-func ParsePublicKey(s string) (*PublicKey, error) {
-	unacceptableKey := func(t, v string, s string) (*PublicKey, error) {
-		return nil, &VerificationError{
-			Source:      KeyError,
-			Tag:         t,
-			Value:       v,
-			Err:         ErrUnacceptableKey,
-			Explanation: s,
-		}
+// ParsePublicKey parses a textual representation of a DKIM public key record
+// according to RFC 6376 section 3.6.1. See https://tools.ietf.org/html/rfc6376#section-3.6.1
+// for the details. It returns a PublicKey struct and a slice
+// of errors representing all validation errors encountered during parsing.
+//
+// The PublicKey is returned even if parsing encountered errors. Errors returned
+// are encapsulated within the VerificationError struct, providing detailed
+// information about the specific issue, including the affected tag and its value.
+//
+// The returned PublicKey may not be fully valid or usable if critical errors exist.
+// Callers must examine the slice of VerificationError to determine if the key
+// is usable or has been revoked. Common verification errors include:
+//
+// - ErrEmptyRecord: The input record is empty.
+// - ErrUnsupportedVersion: The DKIM version is not supported.
+// - ErrUnsupportedAlgorithm: Unsupported hash or key algorithm specified.
+// - ErrDecodeBase64: Invalid base64 data in public key record.
+// - ErrWeakRSAKey: RSA key length is below security threshold.
+// - ErrInvalidED25519Key: Provided ed25519 key data is invalid.
+// - ErrMissedPTag: Missing required "p=" public key data tag.
+// - ErrUnsupportedServices: Unsupported services listed.
+func ParsePublicKey(s string) (*PublicKey, []error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil, []error{verificationError(ErrEmptyRecord, "", "", expEmptyRecord)}
 	}
 
-	if s == "" {
-		return unacceptableKey("", "", expEmptyKey)
-	}
-	const (
-		fData uint64 = 1 << iota
-	)
-	required := fData
-	missedTags := func() string {
-		symbols := []string{"v", "a", "b", "bh", "d", "h", "s"}
-		var w bytes.Buffer
-		w.WriteString("no required tags found (")
-		for f, i, d := fData, 0, false; f <= fData; f, i = f<<1, i+1 {
-			if (required & f) == 0 {
-				continue
-			}
-			if d {
-				w.WriteString(", ")
-			}
-			w.WriteString(symbols[i])
-			d = true
-		}
-		w.WriteByte(')')
-		return w.String()
-	}
+	var errs []error
+	required := false
 	k := &PublicKey{Revoked: true, Raw: s}
 	for _, m := range reTagValueList.FindAllStringSubmatch(s, -1) {
 		// m := ["t=v" "t" "v"]
@@ -727,7 +732,7 @@ func ParsePublicKey(s string) (*PublicKey, error) {
 		switch key {
 		case "v": // Version of the DKIM key record
 			if value != "DKIM1" {
-				return unacceptableKey("v", value, expUnsupportedVersion)
+				errs = append(errs, verificationError(ErrUnsupportedVersion, "v", value, expUnsupportedVersion))
 			}
 			k.Version = value
 		case "h": // Acceptable Hash algorithms
@@ -741,14 +746,14 @@ func ParsePublicKey(s string) (*PublicKey, error) {
 				return s
 			})
 			if !acceptable {
-				return unacceptableKey("h", value, expUnsupportedAlgorithm)
+				errs = append(errs, verificationError(ErrUnsupportedAlgorithm, "h", value, expUnsupportedAlgorithm))
 			}
 		case "k": // Key type
 			k.KeyType = value
 			if value != "rsa" && value != "ed25519" {
 				// Unrecognized key types MUST be ignored.
 				// https://tools.ietf.org/html/rfc6376#page-27
-				return unacceptableKey("k", value, expUnsupportedAlgorithm)
+				errs = append(errs, verificationError(ErrUnsupportedAlgorithm, "k", value, expUnsupportedAlgorithm))
 			}
 		case "n": // Notes that might be of interest to a human
 			k.Notes = value
@@ -756,34 +761,14 @@ func ParsePublicKey(s string) (*PublicKey, error) {
 			// An empty value means that this public key has been revoked.
 			// The syntax and semantics of this tag value before being
 			// encoded in base64 are defined by the "k=" tag.
+			required = true
 			if value != "" {
-				// INFORMATIVE NOTE: A base64string is permitted to include
-				//         whitespace (FWS) at arbitrary places; however, any CRLFs must
-				//         be followed by at least one WSP character.  Implementers and
-				//         administrators are cautioned to ensure that selector TXT RRs
-				//         conform to this specification.
-				b, err := base64.StdEncoding.DecodeString(reReduceFWS.ReplaceAllString(value, ""))
+				var err error
+				k.Data, k.Key, k.Revoked, err = validatePublicKey(k.KeyType, value)
 				if err != nil {
-					return unacceptableKey("p", value, err.Error())
+					errs = append(errs, err)
 				}
-				k.Data = b
-				if k.KeyType == "ed25519" {
-					k.Revoked = false
-					return k, nil
-				}
-				i, err := x509.ParsePKIXPublicKey(b)
-				if err != nil {
-					return unacceptableKey("p", value, err.Error())
-				}
-				pkey, ok := i.(*rsa.PublicKey)
-				if !ok {
-					// should not happen
-					return unacceptableKey("p", value, "internal error")
-				}
-				k.Key = pkey
-				k.Revoked = false
 			}
-			required &^= fData
 		case "s": // Service Type
 			acceptable := false
 			k.Services = mapMatches(reKeySTag, value, func(m []string) string {
@@ -797,7 +782,7 @@ func ParsePublicKey(s string) (*PublicKey, error) {
 				return m[1]
 			})
 			if !acceptable {
-				return unacceptableKey("s", value, expUnsupportedServices)
+				errs = append(errs, verificationError(ErrUnsupportedServices, "s", value, expUnsupportedServices))
 			}
 		case "t": // Flags
 			k.Flags = mapMatches(reKeyXTag, value, func(m []string) string {
@@ -812,11 +797,56 @@ func ParsePublicKey(s string) (*PublicKey, error) {
 			})
 		}
 	}
-	if required != 0 {
-		return unacceptableKey("", "", missedTags())
+	if !required {
+		errs = append(errs, verificationError(ErrMissedPTag, "p", "", "no required tag p found"))
 	}
 
-	return k, nil
+	return k, errs
+}
+
+func validatePublicKey(keyType, src string) ([]byte, *rsa.PublicKey, bool, error) {
+	// INFORMATIVE NOTE: A base64string is permitted to include
+	//         whitespace (FWS) at arbitrary places; however, any CRLFs must
+	//         be followed by at least one WSP character.  Implementers and
+	//         administrators are cautioned to ensure that selector TXT RRs
+	//         conform to this specification.
+	b, err := base64.StdEncoding.DecodeString(reReduceFWS.ReplaceAllString(src, ""))
+	if err != nil {
+		return nil, nil, true, verificationError(ErrDecodeBase64, "p", src, err.Error())
+	}
+
+	if keyType == "ed25519" {
+		if l := len(b); l != ed25519.PublicKeySize {
+			return b, nil, true, verificationError(ErrInvalidED25519Key, "p", src, "ed25519: bad public key length: "+strconv.Itoa(l))
+		}
+
+		return b, nil, false, nil
+	}
+
+	i, err := x509.ParsePKIXPublicKey(b)
+	if err != nil {
+		return b, nil, true, verificationError(ErrParsePublicKey, "p", src, err.Error())
+	}
+	pkey, ok := i.(*rsa.PublicKey)
+	if !ok {
+		// should not happen
+		return b, nil, true, verificationError(ErrParsePublicKey, "p", src, "internal error")
+	}
+	if pkey.N.BitLen() < MinRSAKeyLen {
+		return b, nil, true, verificationError(ErrWeakRSAKey, "p", src, fmt.Sprintf("RSA key too short (%d bits)", pkey.N.BitLen()))
+	}
+
+	return b, pkey, false, nil
+}
+
+func verificationError(err error, t, v string, s string) error {
+	return &VerificationError{
+		Source:      KeyError,
+		Tag:         t,
+		Value:       v,
+		Err:         err,
+		Explanation: s,
+	}
 }
 
 func (s *Signature) verifyBodyHash(rs io.ReadSeeker) (ResultCode, error) {
