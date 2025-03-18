@@ -1,6 +1,7 @@
 package dkim
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/stretchr/testify/assert"
 )
 
 type cacheEntry struct {
@@ -38,7 +40,7 @@ func CachedPublicKeyQuery(s *Signature) (*PublicKey, error) {
 		return c.k, c.e
 	}
 	k, e := ParsePublicKey(c.s)
-	entry := &cacheEntry{k: k, e: e}
+	entry := &cacheEntry{k: k, e: errors.Join(e...)}
 	cache[n] = entry
 	return entry.k, nil
 }
@@ -76,7 +78,7 @@ func TestDnsTxtPublicKeyQuery(t *testing.T) {
 		{"highgrade", sigs["highgrade"], mustKey("highgrade", "guerrillamail.com"), nil},
 		// skipped as dns record no longer contains public key
 		//{"20161025", sigs["20161025"], mustKey("20161025", "1e100.net"), nil},
-		{"temperror", sigs["temperror"], nil, ErrKeyUnavailable},
+		{"temperror", sigs["temperror"], &PublicKey{Raw: "v=DKIM1; p=", Version: "DKIM1", Revoked: true}, nil},
 	}
 
 	const wantTest = -1
@@ -98,63 +100,174 @@ func TestDnsTxtPublicKeyQuery(t *testing.T) {
 }
 
 func TestParsePublicKey(t *testing.T) {
-	unacceptableKey := func(t, v string, s string) error {
-		return &VerificationError{
-			Source:      KeyError,
-			Tag:         t,
-			Value:       v,
-			Err:         ErrUnacceptableKey,
-			Explanation: s,
-		}
-	}
 	tests := []struct {
 		name    string
 		raw     string
 		wantKey *PublicKey
-		wantErr error
+		wantErr []error
 	}{
-		{"empty",
-			"", nil, unacceptableKey("", "", expEmptyKey)},
-		{"wrong_version",
-			"v=1", nil, unacceptableKey("v", "1", expUnsupportedVersion)},
-		{"no data",
-			"v=DKIM1", nil, unacceptableKey("", "", "no required tags found (v)")},
-		{"wrong algorithm",
-			"h=md5", nil, unacceptableKey("h", "md5", expUnsupportedAlgorithm)},
-		{"wrong type",
-			"k=des", nil, unacceptableKey("k", "des", expUnsupportedAlgorithm)},
-		{"revoked",
-			"p=", &PublicKey{Raw: "p=", Revoked: true}, nil},
-		{"wrong data",
-			"p==", nil, unacceptableKey("p", "=", "illegal base64 data at input byte 0")},
-		{"not a key",
-			"p=MAMA", nil, unacceptableKey("p", "MAMA", "asn1: syntax error: data truncated")},
-		{"revoked testing strict",
-			"p=; t=y:\n\ts", &PublicKey{Raw: "p=; t=y:\n\ts", Flags: []string{"y", "s"}, Revoked: true, Testing: true, Strict: true}, nil},
-		{"x-teleport",
-			"p=; s=*:email:x-teleport", &PublicKey{Raw: "p=; s=*:email:x-teleport", Revoked: true, Services: []string{"*", "email", "x-teleport"}}, nil},
-		{"no services listed",
-			"p=; s=x-teleport", nil, unacceptableKey("s", "x-teleport", expUnsupportedServices)},
-		{"key with ws", `k=rsa; p=  NDM1NWE0Nm
- IxOWQzNDhkYzJmNTdjM   DQ2ZjhlZjYzZDQ1Mzh   lYmI5MzYwMDBm 
- M2M5ZWU5NTRhMjc0NjBkZDg2NSAgLQo=`, nil, unacceptableKey("p", `NDM1NWE0Nm
- IxOWQzNDhkYzJmNTdjM   DQ2ZjhlZjYzZDQ1Mzh   lYmI5MzYwMDBm 
- M2M5ZWU5NTRhMjc0NjBkZDg2NSAgLQo=`, "asn1: structure error: tags don't match (16 vs {class:0 tag:20 length:51 isCompound:true}) {optional:false explicit:false application:false private:false defaultValue:<nil> tag:<nil> stringType:0 timeType:0 set:false omitEmpty:false} publicKeyInfo @2")},
+		{
+			"empty",
+			"",
+			nil,
+			[]error{verificationError(ErrEmptyRecord, "", "", expEmptyRecord)},
+		},
+		{
+			"wrong_version",
+			"v=1",
+			&PublicKey{Raw: "v=1", Version: "1", Revoked: true},
+			[]error{
+				verificationError(ErrUnsupportedVersion, "v", "1", expUnsupportedVersion),
+				verificationError(ErrMissedPTag, "p", "", "no required tag p found"),
+			},
+		},
+		{
+			"no data",
+			"v=DKIM1",
+			&PublicKey{Raw: "v=DKIM1", Version: "DKIM1", Revoked: true},
+			[]error{verificationError(ErrMissedPTag, "p", "", "no required tag p found")},
+		},
+		{
+			"wrong algorithm",
+			"h=md5",
+			&PublicKey{Raw: "h=md5", Algorithms: []string{"rsa-md5"}, Revoked: true},
+			[]error{
+				verificationError(ErrUnsupportedAlgorithm, "h", "md5", expUnsupportedAlgorithm),
+				verificationError(ErrMissedPTag, "p", "", "no required tag p found"),
+			},
+		},
+		{
+			"wrong type",
+			"k=des",
+			&PublicKey{Raw: "k=des", KeyType: "des", Revoked: true},
+			[]error{
+				verificationError(ErrUnsupportedAlgorithm, "k", "des", expUnsupportedAlgorithm),
+				verificationError(ErrMissedPTag, "p", "", "no required tag p found"),
+			},
+		},
+		{
+			"revoked",
+			"p=",
+			&PublicKey{Raw: "p=", Revoked: true},
+			nil,
+		},
+		{
+			"wrong data",
+			"p==",
+			&PublicKey{Raw: "p==", Revoked: true},
+			[]error{
+				verificationError(ErrDecodeBase64, "p", "=", "illegal base64 data at input byte 0"),
+			},
+		},
+		{
+			"not a key",
+			"p=MAMA",
+			&PublicKey{Raw: "p=MAMA", Data: []byte{0x30, 0x03, 0x00}, Revoked: true},
+			[]error{
+				verificationError(ErrParsePublicKey, "p", "MAMA", "asn1: syntax error: data truncated"),
+			},
+		},
+		{
+			"revoked testing strict",
+			"p=; t=y:\n\ts",
+			&PublicKey{Raw: "p=; t=y:\n\ts", Flags: []string{"y", "s"}, Revoked: true, Testing: true, Strict: true},
+			nil,
+		},
+		{
+			"x-teleport",
+			"p=; s=*:email:x-teleport",
+			&PublicKey{Raw: "p=; s=*:email:x-teleport", Revoked: true, Services: []string{"*", "email", "x-teleport"}},
+			nil,
+		},
+		{
+			"no services listed",
+			"p=; s=x-teleport",
+			&PublicKey{Raw: "p=; s=x-teleport", Services: []string{"x-teleport"}, Revoked: true},
+			[]error{verificationError(ErrUnsupportedServices, "s", "x-teleport", expUnsupportedServices)},
+		},
+		{
+			"key with ws",
+			`k=rsa; p=  NDM1NWE0Nm\n IxOWQzNDhkYzJmNTdjM   DQ2ZjhlZjYzZDQ1Mzh   lYmI5MzYwMDBm \n M2M5ZWU5NTRhMjc0NjBkZDg2NSAgLQo=`,
+			&PublicKey{Raw: "k=rsa; p=  NDM1NWE0Nm\\n IxOWQzNDhkYzJmNTdjM   DQ2ZjhlZjYzZDQ1Mzh   lYmI5MzYwMDBm \\n M2M5ZWU5NTRhMjc0NjBkZDg2NSAgLQo=", Version: "", KeyType: "rsa", Revoked: true},
+			[]error{
+				verificationError(ErrDecodeBase64, "p", `NDM1NWE0Nm\n IxOWQzNDhkYzJmNTdjM   DQ2ZjhlZjYzZDQ1Mzh   lYmI5MzYwMDBm \n M2M5ZWU5NTRhMjc0NjBkZDg2NSAgLQo=`, "illegal base64 data at input byte 10"),
+			},
+		},
+		{
+			"512",
+			"v=DKIM1; k=rsa; p=MFwwDQYJKoZIhvcNAQEBBQADSwAwSAJBAMPekl+uAfmcdIuyNUybIsdPyzK6mFOk5s87lOXFWKs//btaTCJRSjG1kijuGZZEZluxlX/qR1xB4G/ep/hYTZkCAwEAAQ==",
+			&PublicKey{
+				Raw:     "v=DKIM1; k=rsa; p=MFwwDQYJKoZIhvcNAQEBBQADSwAwSAJBAMPekl+uAfmcdIuyNUybIsdPyzK6mFOk5s87lOXFWKs//btaTCJRSjG1kijuGZZEZluxlX/qR1xB4G/ep/hYTZkCAwEAAQ==",
+				Version: "DKIM1",
+				KeyType: "rsa",
+				Revoked: true,
+				Data:    []uint8{0x30, 0x5c, 0x30, 0xd, 0x6, 0x9, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0xd, 0x1, 0x1, 0x1, 0x5, 0x0, 0x3, 0x4b, 0x0, 0x30, 0x48, 0x2, 0x41, 0x0, 0xc3, 0xde, 0x92, 0x5f, 0xae, 0x1, 0xf9, 0x9c, 0x74, 0x8b, 0xb2, 0x35, 0x4c, 0x9b, 0x22, 0xc7, 0x4f, 0xcb, 0x32, 0xba, 0x98, 0x53, 0xa4, 0xe6, 0xcf, 0x3b, 0x94, 0xe5, 0xc5, 0x58, 0xab, 0x3f, 0xfd, 0xbb, 0x5a, 0x4c, 0x22, 0x51, 0x4a, 0x31, 0xb5, 0x92, 0x28, 0xee, 0x19, 0x96, 0x44, 0x66, 0x5b, 0xb1, 0x95, 0x7f, 0xea, 0x47, 0x5c, 0x41, 0xe0, 0x6f, 0xde, 0xa7, 0xf8, 0x58, 0x4d, 0x99, 0x2, 0x3, 0x1, 0x0, 0x1},
+			},
+			[]error{
+				verificationError(ErrWeakRSAKey, "p", `MFwwDQYJKoZIhvcNAQEBBQADSwAwSAJBAMPekl+uAfmcdIuyNUybIsdPyzK6mFOk5s87lOXFWKs//btaTCJRSjG1kijuGZZEZluxlX/qR1xB4G/ep/hYTZkCAwEAAQ==`, "RSA key too short (512 bits)"),
+			},
+		},
+		{
+			"no-p",
+			"v=DKIM1;",
+			&PublicKey{Raw: "v=DKIM1;", Version: "DKIM1", Revoked: true},
+			[]error{verificationError(ErrMissedPTag, "p", "", "no required tag p found")},
+		},
+		{
+			"no-dkim-record",
+			" ",
+			nil,
+			[]error{verificationError(ErrEmptyRecord, "", "", "empty record")},
+		},
+		{
+			"invalid-base64",
+			"v=DKIM1; k=rsa; p=invalid-base64$$$===",
+			&PublicKey{Raw: "v=DKIM1; k=rsa; p=invalid-base64$$$===", Version: "DKIM1", KeyType: "rsa", Revoked: true},
+			[]error{verificationError(ErrDecodeBase64, "p", "invalid-base64$$$===", "illegal base64 data at input byte 7")},
+		},
+		{
+			"invalid-algorithm",
+			"v=DKIM1; k=unsupported; p=",
+			&PublicKey{Raw: "v=DKIM1; k=unsupported; p=", Version: "DKIM1", KeyType: "unsupported", Revoked: true},
+			[]error{verificationError(ErrUnsupportedAlgorithm, "k", "unsupported", "unsupported algorithm")},
+		},
+		{
+			"invalid-version",
+			"v=DKIM99; k=rsa; p=",
+			&PublicKey{Raw: "v=DKIM99; k=rsa; p=", Version: "DKIM99", KeyType: "rsa", Revoked: true},
+			[]error{verificationError(ErrUnsupportedVersion, "v", "DKIM99", "unsupported version")},
+		},
+		{
+			"invalid-service",
+			"v=DKIM1; s=unsupported; k=rsa; p=",
+			&PublicKey{Raw: "v=DKIM1; s=unsupported; k=rsa; p=", Version: "DKIM1", KeyType: "rsa", Services: []string{"unsupported"}, Revoked: true},
+			[]error{verificationError(ErrUnsupportedServices, "s", "unsupported", "no supported services listed")},
+		},
+		{
+			"revoked",
+			"v=DKIM1; p=",
+			&PublicKey{Raw: "v=DKIM1; p=", Version: "DKIM1", Revoked: true},
+			nil,
+		},
+		{
+			"invalid-ed25519",
+			"v=DKIM1; k=ed25519; p=aW52YWxpZCByc2EK",
+			&PublicKey{Raw: "v=DKIM1; k=ed25519; p=aW52YWxpZCByc2EK", Version: "DKIM1", KeyType: "ed25519", Revoked: true, Data: []uint8{0x69, 0x6e, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x20, 0x72, 0x73, 0x61, 0xa}},
+			[]error{verificationError(ErrInvalidED25519Key, "p", "aW52YWxpZCByc2EK", "ed25519: bad public key length: 12")},
+		},
+		{
+			"invalid-rsa",
+			"v=DKIM1; k=rsa; p=aW52YWxpZCByc2EK",
+			&PublicKey{Raw: "v=DKIM1; k=rsa; p=aW52YWxpZCByc2EK", Version: "DKIM1", KeyType: "rsa", Revoked: true, Data: []uint8{0x69, 0x6e, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x20, 0x72, 0x73, 0x61, 0xa}},
+			[]error{verificationError(ErrParsePublicKey, "p", "aW52YWxpZCByc2EK", "asn1: structure error: tags don't match (16 vs {class:1 tag:9 length:110 isCompound:true}) {optional:false explicit:false application:false private:false defaultValue:<nil> tag:<nil> stringType:0 timeType:0 set:false omitEmpty:false} publicKeyInfo @2")},
+		},
 	}
-	const wantTest = 11
+
 	for testNo, test := range tests {
-		//noinspection GoBoolExpressions
-		if wantTest > -1 && wantTest != testNo {
-			continue
-		}
 		t.Run(fmt.Sprintf("%d_%s", testNo, test.name), func(t *testing.T) {
-			key, err := ParsePublicKey(test.raw)
-			if !reflect.DeepEqual(err, test.wantErr) {
-				t.Errorf("ParsePublicKey()\n\t    err=\"%v\"\n\twantErr=\"%v\"", err, test.wantErr)
-			}
-			if !reflect.DeepEqual(key, test.wantKey) {
-				t.Errorf("ParsePublicKey()\n\t    key=\"%#v\"\n\twantKey=\"%#v\"", key, test.wantKey)
-			}
+			key, errs := ParsePublicKey(test.raw)
+			assert.Equal(t, test.wantErr, errs)
+			assert.Equal(t, test.wantKey, key)
 		})
 	}
 }
