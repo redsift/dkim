@@ -1,3 +1,9 @@
+# STATUS
+This repository is archived and no longer maintained.
+
+- No further updates or bug fixes will be provided
+- Issues and pull requests are disabled
+
 # DKIM verification [![Go Report Card](https://goreportcard.com/badge/github.com/redsift/dkim)](https://goreportcard.com/report/github.com/redsift/dkim) [![GoDoc](https://godoc.org/github.com/cwredsift/dkim?status.svg)](https://godoc.org/github.com/redsift/dkim) [![Go](https://github.com/redsift/dkim/actions/workflows/go.yml/badge.svg)](https://github.com/redsift/dkim/actions/workflows/go.yml)
 
 The project was started as a fork of https://github.com/kalloc/dkim
